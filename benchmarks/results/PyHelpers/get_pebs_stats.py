@@ -160,8 +160,7 @@ def create_data_dir(parent_dir: str):
     return ret.resolve().as_posix()
 
 
-def closest_to_mean(file_infos, option):
-    values = [tracker_dict[option].get() for tracker_dict in file_infos.values()]
+def closest_to_mean(file_infos, values, option):
     mean = statistics.mean(values)
     corr_file, smallest_distance = list(file_infos.items())[0][0], abs(
         list(file_infos.items())[0][1][option].get() - mean)
@@ -173,22 +172,19 @@ def closest_to_mean(file_infos, option):
     return mean, smallest_distance, corr_file
 
 
-def custom_dict_min(file_infos, option):
-    values = [tracker_dict[option].get() for tracker_dict in file_infos.values()]
+def custom_dict_min(file_infos, values, option):
     min_value = min(values)
     return min_value, \
         [filename for filename, tracker_dict in file_infos.items() if tracker_dict[option].get() == min_value][0]
 
 
-def custom_dict_max(file_infos, option):
-    values = [tracker_dict[option].get() for tracker_dict in file_infos.values()]
+def custom_dict_max(file_infos, values, option):
     max_value = max(values)
     return max_value, \
         [filename for filename, tracker_dict in file_infos.items() if tracker_dict[option].get() == max_value][0]
 
 
-def custom_dict_median(file_infos, option):
-    values = [tracker_dict[option].get() for tracker_dict in file_infos.values()]
+def custom_dict_median(file_infos, values, option):
     median_value = statistics.median(values)
     return median_value, \
         [filename for filename, tracker_dict in file_infos.items() if tracker_dict[option].get() == median_value][0]
@@ -204,10 +200,10 @@ def remove_useless_files(kept_files, raw_data_dir):
             Path(posix_abs_path + ".out").unlink()
 
 
-def create_symlinks(kept_info, parent_dir):
+def create_output_files(kept_info, parent_dir):
     for option, (values_tuple, files_tuple) in kept_info.items():
         assert len(files_tuple) == 4
-        assert len(values_tuple) == 5
+        assert len(values_tuple) == 6
         if option == 'c':
             subdir = COUNT_DATA_DIR
         elif option == 'r':
@@ -224,7 +220,9 @@ def create_symlinks(kept_info, parent_dir):
         Path(symlink_parent_dir + 'median').symlink_to(files_tuple[3])
         with open(symlink_parent_dir + 'summary.txt', 'w') as summary_file:
             summary_file.write(
-                f"Min: {values_tuple[0]}\nMax: {values_tuple[1]}\nMean: {values_tuple[2]} ; distance of selected file: {values_tuple[3]}\nMedian: {values_tuple[4]}\n")
+                f"Min: {values_tuple[0]}\nMax: {values_tuple[1]}\nMean: {values_tuple[2]} ; "
+                f"distance of selected file: {values_tuple[3]}\nMedian: {values_tuple[4]}\n"
+                f"Standard deviation: {values_tuple[5]}")
 
 
 def analyse_run_data(parent_dir: str, raw_data_dir: str, count: bool, ratio: bool, read: bool, write: bool):
@@ -263,16 +261,17 @@ def analyse_run_data(parent_dir: str, raw_data_dir: str, count: bool, ratio: boo
     if write:
         options.append('W')
     for option in options:
-        min_value, min_file = custom_dict_min(file_infos, option)
-        max_value, max_file = custom_dict_max(file_infos, option)
-        mean_value, mean_distance, mean_file = closest_to_mean(file_infos, option)
-        median_value, median_file = custom_dict_median(file_infos, option)
+        values = [tracker_dict[option].get() for tracker_dict in file_infos.values()]
+        min_value, min_file = custom_dict_min(file_infos, values, option)
+        max_value, max_file = custom_dict_max(file_infos, values, option)
+        mean_value, mean_distance, mean_file = closest_to_mean(file_infos, values, option)
+        median_value, median_file = custom_dict_median(file_infos, values, option)
         kept_info[option] = (
-            (min_value, max_value, mean_value, mean_distance, median_value),
+            (min_value, max_value, mean_value, mean_distance, median_value, statistics.stdev(values)),
             (min_file, max_file, mean_file, median_file))
 
     remove_useless_files(set(itertools.chain.from_iterable([x[1] for x in kept_info.values()])), raw_data_dir)
-    create_symlinks(kept_info, parent_dir)
+    create_output_files(kept_info, parent_dir)
 
 
 def analyse_data_file(count, data_file_path, file_infos_dict, dict_lock, ratio, read, write):
@@ -393,7 +392,6 @@ def record_perf_output(program_absolute_path_str, raw_data_abs, step, freq, time
     out = run(cmd, shell=True, stdout=PIPE, stderr=STDOUT)
     # save output
     with open(out_filename + '.out', "w") as f:
-        #hactiveanon, pt_mk_young
         f.write(out.stdout.decode('utf-8'))
 
 
