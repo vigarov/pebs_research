@@ -1,0 +1,1 @@
+./pmbench -m 8192 -s 8192 -r 50 -d 0 -t rdtscp -c 120

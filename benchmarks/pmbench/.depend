@@ -1,0 +1,6 @@
+pmbench.o: pmbench.c system.h rdtsc.h cpuid.h pattern.h access.h \
+ pmbench.h
+pattern.o: pattern.c system.h rdtsc.h pattern.h
+system.o: system.c system.h rdtsc.h cpuid.h pattern.h pmbench.h access.h
+access.o: access.c rdtsc.h system.h access.h
+xmlgen.o: xmlgen.c system.h rdtsc.h pmbench.h access.h pattern.h
