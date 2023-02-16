@@ -288,14 +288,23 @@ def analyse_data_file(count, data_file_path, file_infos_dict, dict_lock, ratio, 
         file_info['W'] = OpTypeTracker("W")
     analysis_cmd = base_analysis_cmd + abs_path
     events = run(analysis_cmd, stderr=STDOUT, stdout=PIPE, shell=True).stdout.decode('utf-8').splitlines()
+    errors = 0
     for event_line in events:
-        if event_line == "":
-            break
+        if "Warning" in event_line or "Processed" in event_line or "Check IO/CPU" in event_line:
+            continue
         else:
             split_line = event_line.split()
-            event = Event(split_line[EV_TYPE_POS], split_line[EV_ADDR_POS], split_line[EV_IP_POS])
+            if len(split_line) == 0:
+                continue
+            try:
+                event = Event(split_line[EV_TYPE_POS], split_line[EV_ADDR_POS], split_line[EV_IP_POS])
+            except IndexError:
+                errors += 1
+                continue
             for f_i in file_info.values():
                 f_i.update(event)
+    if errors != 0:
+        print(f"Got at least {errors} errors for {abs_path}")
     dict_lock.acquire()
     file_infos_dict[abs_path] = file_info
     dict_lock.release()
