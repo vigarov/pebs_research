@@ -222,7 +222,7 @@ def create_output_files(kept_info, parent_dir):
             summary_file.write(
                 f"Min: {values_tuple[0]}\nMax: {values_tuple[1]}\nMean: {values_tuple[2]} ; "
                 f"distance of selected file: {values_tuple[3]}\nMedian: {values_tuple[4]}\n"
-                f"Standard deviation: {values_tuple[5]}")
+                f"Standard deviation: {values_tuple[5]}\n")
 
 
 def analyse_run_data(parent_dir: str, raw_data_dir: str, count: bool, ratio: bool, read: bool, write: bool):
