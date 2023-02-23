@@ -35,11 +35,11 @@ int default_mmap_size = 8*1024;
 
 // Structure to store command line arguments
 struct arguments {
-    char *executable_path;
+    const char *executable_path;
     char **executable_args;
     union {
         uint8_t executable_path_position;
-        uint8_t num_executable_args;  // Once we parse the main argument, we'll be abe to infer num_executable args, and we won't need executable_path_position anymore
+        uint8_t num_extra_executable_args;  // Once we parse the main argument, we'll be abe to infer num_executable args, and we won't need executable_path_position anymore
     };
     const char *output_dir;
     uint64_t counter;
@@ -202,12 +202,20 @@ void gather_stats(struct arguments *args) {
     else if(child_pid == 0){
         //Child
         pause(); // Wait for CONT signal;
-        //exec
-
+        printf("Child Process: Received CONT sig, continuing");
+        error = execvp(args->executable_path,args->executable_args);
+        if(error){
+            printf("Child Process: Failed to exec: %s", strerror(errno));
+            error = kill(getppid(),SIGTERM);
+            if(error){
+                printf("Child Process: Could not terminate parent: %s", strerror(errno));
+            }
+            exit(error);
+        }
     }
     else{
         //Parent
-        sleep(1); //Give time for child to pause() and wait for us to set up
+        sleep(3); //Give time for child to set up and pause() and wait for us to set up
         struct pollfd to_poll[NM_EVENTS] = {{.fd=loads_event_fd,.events=POLLIN | POLLERR | POLLHUP},{.fd=stores_event_fd,.events=POLLIN | POLLERR | POLLHUP}};
         while(1){
             //Reset revents
@@ -292,9 +300,7 @@ void gather_stats(struct arguments *args) {
     }
     free_args:
     // free argument memory
-    if (args->executable_args != NULL) {
-        free(args->executable_args);
-    }
+    free(args->executable_args); //never null if file specified, as first argument is always path name
 }
 
 int get_remainder_arguments(struct arguments *arguments, int argc, char **argv) {
@@ -303,17 +309,19 @@ int get_remainder_arguments(struct arguments *arguments, int argc, char **argv) 
         return EINVAL;
 
     //We have argc - exec_pos - 1 for-the-executable arguments
-    arguments->num_executable_args = argc - exec_pos - 1;
-    if(arguments->num_executable_args == 0){
+    arguments->num_extra_executable_args = argc - exec_pos - 1;
+    if(arguments->num_extra_executable_args == 0){
         //No additional executable arguments; our job here is done
         return 0;
     }
-    arguments->executable_args = malloc(arguments->num_executable_args * sizeof(char*));
+    const size_t malloc_size = (arguments->num_extra_executable_args + 2) * sizeof(char*); //+1 for program name, +1 for null ptr at the end
+    arguments->executable_args = malloc(malloc_size);
+    memset(arguments->executable_args,0,malloc_size);
     if(arguments->executable_args == NULL){
        return ENOMEM;
     }
-    for(uint8_t i=0; i<arguments->num_executable_args;i++){
-        arguments->executable_args[i] = argv[i+exec_pos+1]; //+1 since the arguments start after the exec name, situated at exec_pos
+    for(uint8_t i=0; i<arguments->num_extra_executable_args; i++){ //+1 iteration since the arguments start at the exec name, situated at exec_pos
+        arguments->executable_args[i] = argv[i+exec_pos];
     }
     return 0;
 }
@@ -323,7 +331,7 @@ int main(int argc, char* argv[]){
     struct arguments arguments = {
             .executable_path = NULL,
             .executable_args = NULL,
-            .num_executable_args = 0,
+            .num_extra_executable_args = 0,
             .output_dir = default_output_dir,
             .counter = default_counter,
             .mmap_size = default_mmap_size
