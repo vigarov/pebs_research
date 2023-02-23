@@ -124,11 +124,10 @@ def generate_figure(use_period, data_dict: dict, mode: str, n: str):
         median_green_crosses = curr_ax.scatter(np.arange(len(thresholds)), medians, facecolor='g', marker='x', zorder=2)
         curr_ax.set_title(str(metric).capitalize())
         y_max = None
-        y_min = None
+        y_min = 0
         scaled_opt = None
         if metric == "ratio":
             y_max = 10
-            y_min = -1
             blue_line = curr_ax.axhline(y=opt_ratio, color='b', linestyle='-')
             curr_ax.set_yticks(list(curr_ax.get_yticks()) + [opt_ratio, y_min, y_max])
             curr_ax.set_ylabel("Load/Store Ratio", ha='left', y=1.1, rotation=0, labelpad=0)
@@ -150,7 +149,6 @@ def generate_figure(use_period, data_dict: dict, mode: str, n: str):
             yellow_line = curr_ax.axhline(y=scaled_opt, color='y', linestyle='-')
             if mode == PMBENCH_MODE:
                 green_line = curr_ax.axhline(y=less_scaled_opt, color='g', linestyle='-')
-            y_min = 0
             curr_ax.set_yticks(
                 list(curr_ax.get_yticks()) + ([scaled_opt] if mode == STREAM_MODE else [scaled_opt, less_scaled_opt]))
         curr_ax.set_ylim([y_min, y_max])
