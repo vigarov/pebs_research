@@ -13,6 +13,7 @@ Simlinks are used to reference saved traces, such as to avoid duplication.
 """
 
 import argparse
+import math
 from pathlib import Path
 from subprocess import *
 from datetime import datetime
@@ -128,8 +129,7 @@ def rm_r(path):
         shutil.rmtree(path)
 
 
-def create_parent_directory(parent: str,
-                            overwrite_on_exist: bool):  # , count: bool, ratio: bool, read: bool, write: bool
+def create_parent_directory(parent: str, overwrite_on_exist: bool):
     parent_path = Path(parent)
     if parent_path.exists():
         if not overwrite_on_exist:
@@ -185,7 +185,7 @@ def custom_dict_max(file_infos, values, option):
 
 
 def custom_dict_median(file_infos, values, option):
-    median_value = statistics.median(values)
+    median_value = sorted(values)[len(values)//2]
     return median_value, \
         [filename for filename, tracker_dict in file_infos.items() if tracker_dict[option].get() == median_value][0]
 
@@ -242,14 +242,19 @@ def analyse_run_data(parent_dir: str, raw_data_dir: str, count: bool, ratio: boo
     all_data_files_paths = sorted(set(data_dir_path.glob("perf.data.*")) - set(data_dir_path.glob("perf.data.*.out")))
     file_infos = {}
     file_infos_lock = threading.Lock()
-    all_threads = []
-    for data_file_path in all_data_files_paths:
-        t = threading.Thread(target=analyse_data_file,
-                             args=(count, data_file_path, file_infos, file_infos_lock, ratio, read, write))
-        all_threads.append(t)
-        t.start()
-    for thread in all_threads:
-        thread.join()
+    # Split work into (# cpu cores) threads, to not have a memory overflow and premature kill since, either way, we
+    # won't be able to execute more than (# cpu cores) threads in parallel. --> We want K list of size os.cpu_count()
+    # --> K = ceil(len(all_data_files_paths) / os.cpu_count())
+    for i in range(math.ceil(len(all_data_files_paths) / os.cpu_count())):
+        sublist = all_data_files_paths[i::os.cpu_count()]
+        all_threads = []
+        for data_file_path in sublist:
+            t = threading.Thread(target=analyse_data_file,
+                                 args=(count, data_file_path, file_infos, file_infos_lock, ratio, read, write))
+            all_threads.append(t)
+            t.start()
+        for thread in all_threads:
+            thread.join()
     kept_info = {}
     options = []
     if count:
@@ -359,6 +364,12 @@ def get_pattern_iterator(pattern_str):
     return ret
 
 
+def parse_output_dir(args):
+    nn(args, args.n, args.directory)
+    args.directory = args.directory.replace('%N', str(args.n))
+    args.directory = args.directory.replace('%%', '%')
+
+
 def get_pebs(args):
     nn(args, args.program, args.n, args.count, args.ratio, args.read, args.write, args.overwrite, args.directory)
     if not args.count and not args.ratio and not args.read and not args.write:
@@ -367,6 +378,7 @@ def get_pebs(args):
     # Check program exists, and get its path
     program_path = Path(args.program)
     assert program_path.exists()
+    parse_output_dir(args)
 
     parent_path_absolute = create_parent_directory(args.directory, args.overwrite)
     nn(parent_path_absolute)
@@ -375,7 +387,7 @@ def get_pebs(args):
     run("echo 0 | sudo tee /proc/sys/kernel/randomize_va_space", shell=True)
 
     for step in iter(get_pattern_iterator(args.pattern)):
-        print("Starting step",step)
+        print("Starting step", step)
         step_once(args, parent_path_absolute, program_path, step)
 
 
@@ -385,19 +397,20 @@ def step_once(args, parent_path_absolute, program_path, step):
     raw_data_abs = create_data_dir(child_dir_abs) + '/'
     for _ in range(args.n):
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S%f")
-        record_perf_output(program_path.resolve().as_posix(), raw_data_abs, step, args.use_freq, timestamp)
+        record_perf_output(program_path.resolve().as_posix(), ' '.join(args.program_arguments), raw_data_abs, step,
+                           args.use_freq, timestamp)
     # 2. Analyse the data ; for a given run, all samples are in the raw_data_abs folder.
     # We should analyse data respective of the user args, create relevant symlinks in subfolders, remove unused data
     analyse_run_data(child_dir_abs, raw_data_abs, args.count, args.ratio, args.read, args.write)
 
 
-def record_perf_output(program_absolute_path_str, raw_data_abs, step, freq, timestamp):
-    # perf record -v -e mem_inst_retired.all_stores:Pu,mem_inst_retired.all_loads:Pu --strict-freq -d -N -c 1 -o <filename> <args.program>
-    base_cmd = 'perf record -v -e mem_inst_retired.all_stores:Pu,mem_inst_retired.all_loads:Pu --strict-freq -d -N ' + (
-        '-F' if freq else '-c') + ' '
+def record_perf_output(program_absolute_path_str, program_args, raw_data_abs, step, freq, timestamp):
+    # perf record -v -e mem_inst_retired.all_stores:Pu,mem_inst_retired.all_loads:Pu --strict-freq -d -N -c 1 -o <out_filename> <program> <program_arguments...>
+    base_cmd = 'perf record -v -e mem_inst_retired.all_stores:Pu,mem_inst_retired.all_loads:Pu ' \
+               '--strict-freq -d -N ' + ('-F' if freq else '-c') + ' '  # ,page-faults:u
 
     out_filename = str(raw_data_abs) + 'perf.data.' + timestamp
-    cmd = base_cmd + str(step) + ' -o ' + out_filename + ' ' + program_absolute_path_str
+    cmd = base_cmd + str(step) + ' -o ' + out_filename + ' ' + program_absolute_path_str + ' ' + program_args
     out = run(cmd, shell=True, stdout=PIPE, stderr=STDOUT)
     # save output
     with open(out_filename + '.out', "w") as f:
@@ -419,8 +432,9 @@ def parse_args():
                         help="Include read - Saves traces based on reads (loads)")
     parser.add_argument('-W', '--write', action=argparse.BooleanOptionalAction, default=False,
                         help="Include write - Saves traces based on writes (stores)")
-    parser.add_argument('-d', '--directory', help="Specifies in which directory to save the data",
-                        default='pebs_stats/')
+    parser.add_argument('-d', '--directory', help="Specifies in which directory to save the data. Use %%N to add the "
+                                                  "value of N, %%%% for a percentage",
+                        default=r'pebs_stats_n%N/' )
     parser.add_argument('--overwrite', action=argparse.BooleanOptionalAction, default=False,
                         help="Automatically overwrites directory (and data inside it) if the directory already exists")
     parser.add_argument('-F', '--use_freq', default=False, help="Use `-F` (frequency) option of perf instead of `-c` ("
@@ -435,7 +449,7 @@ def parse_args():
                                           "by custom([500,1000,1500,2000,10000]). It is meant to be used with --no-freq.",
                         default="default", type=str)
     parser.add_argument('program', type=str, help="program path")
-    parser.add_argument('progarm_arguments', nargs=argparse.REMAINDER,
+    parser.add_argument('program_arguments', nargs=argparse.REMAINDER,
                         help="Arguments to pass to the program when executing it")
     return parser.parse_args()
 
