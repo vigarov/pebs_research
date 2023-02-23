@@ -17,8 +17,14 @@
 #include <signal.h>
 //poll
 #include <poll.h>
+//ioctl
+#include <sys/ioctl.h>
+#include <error.h>
 
 #define DEBUG 1
+
+#define likely(x) __builtin_expect((x),1)
+#define unlikely(x) __builtin_expect((x),0)
 
 const char *argp_program_version = "custom_perf 1.0";
 
@@ -123,6 +129,24 @@ perf_event_open(struct perf_event_attr *hw_event, pid_t pid,
 
 enum event_type{NONE_EVENT=-1,LOAD,STORE,NM_EVENTS};
 
+
+static inline void switch_events(int loads_event_fd, int stores_event_fd, unsigned long int signal) {
+    int error = ioctl(loads_event_fd, signal);
+    if(error){
+        printf("Failed to stop load event: %s", strerror(error));
+    }
+    error = ioctl(stores_event_fd,signal);
+    if(error){
+        printf("Failed to stop load event: %s", strerror(error));
+    }
+}
+
+#define ENABLE_PEBS_EVENTS(load_fd,store_fd) switch_events((load_fd),(store_fd),PERF_EVENT_IOC_ENABLE)
+#define DISABLE_PEBS_EVENTS(load_fd,store_fd) switch_events((load_fd),(store_fd),PERF_EVENT_IOC_DISABLE)
+
+
+
+
 void gather_stats(struct arguments *args) {
     /*
        1. mmap requested amount of memory
@@ -191,26 +215,42 @@ void gather_stats(struct arguments *args) {
                 to_poll[i].revents=0;
             }
             int read = poll(to_poll,NM_EVENTS,-1);
-            if(read < 0){
-                printf("Error polling on the file descriptors: %s", strerror(errno));
-                break;
-            }
-            else if(read == 0){
-                printf("Poll timed out yet no timeout set...");
-                break;
-            }
-            else{
+            if(likely(read > 0)){
                 // One of the fds is ready to be read
+                //Stop the process
+                error = kill(child_pid,SIGSTOP);
+                if(unlikely(error)){
+                    printf("Couldn't pause child process: %s", strerror(errno));
+                }
+                //Just in case, disable PEBS sampling
+                DISABLE_PEBS_EVENTS(loads_event_fd, stores_event_fd);
                 if(read!=1){
                     printf("More than one event ready at the same time... Only parsing first, losing others");
                 }
                 for(int i = LOAD;i<NM_EVENTS;i++){
                     if(to_poll[i].revents!=0){
-
+                        // Analyze the data
+                        printf("Got data from %d !",(uint8_t)i);
+                        goto terminate_child;
                     }
                 }
             }
-
+            else if(unlikely(read == 0)){
+                printf("Poll timed out yet no timeout set...");
+                break;
+            }
+            else{
+                // Error
+                printf("Error polling on the file descriptors: %s", strerror(errno));
+                break;
+            }
+            //Reenable PEBS
+            ENABLE_PEBS_EVENTS(loads_event_fd,stores_event_fd);
+            //Resume the process
+            error = kill(child_pid,SIGCONT);
+            if(unlikely(error)){
+                printf("Couldn't resume child process: %s", strerror(errno));
+            }
         }
 
         /*while(kill(child_pid,0) == 0) { //while child is alive
