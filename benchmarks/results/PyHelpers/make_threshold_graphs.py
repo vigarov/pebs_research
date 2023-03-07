@@ -19,6 +19,7 @@ def parse_args():
                         help="Specify whether the benchmark is STREAM or PMBENCH. Auto will try to find "
                              "out by looking for hints in the direcotry name.", default='auto')
     parser.add_argument('-o', '--output-dir', help='Output directory (backslash ended)', default="figures/")
+    parser.add_argument('--latex', help='Output for latex (pgf)', action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument('directory', help="Parent directory where the subdirectory samples start",
                         default='pebs_stats/')
     return parser.parse_args()
@@ -134,14 +135,14 @@ def generate_figure(use_period, data_dict: dict, mode: str, n: str):
             curr_ax.get_yaxis().set_major_formatter(matplotlib.ticker.FormatStrFormatter('%.2f'))
         elif metric == "read":
             scaled_opt = opt_reads / 1000
-            curr_ax.set_ylabel('# of loads', ha='left', y=1.1, rotation=0, labelpad=0)
+            curr_ax.set_ylabel('Nb. of loads', ha='left', y=1.1, rotation=0, labelpad=0)
         elif metric == "write":
             scaled_opt = opt_writes / 1000
-            curr_ax.set_ylabel('# of stores', ha='left', y=1.1, rotation=0, labelpad=0)
+            curr_ax.set_ylabel('Nb. of stores', ha='left', y=1.1, rotation=0, labelpad=0)
         else:
             assert metric == "count"
             scaled_opt = opt_count / 1000
-            curr_ax.set_ylabel('Total # of memory instructions (R+W)', ha='left', y=1.1, rotation=0, labelpad=0)
+            curr_ax.set_ylabel('Total Nb. of memory instructions (L+S)', ha='left', y=1.1, rotation=0, labelpad=0)
         if metric != "ratio":
             assert scaled_opt is not None
             if mode == PMBENCH_MODE:
@@ -173,7 +174,7 @@ def generate_figure(use_period, data_dict: dict, mode: str, n: str):
         at += 1
     # Set legend ; using last lines is fine
     legend_tuple = [stddev_error, min_max_error, median_green_crosses, blue_line, yellow_line]
-    legend_desc = ['Standard deviation', "Black point: mean; bounded by min&max", "Median", "Ground Truth value",
+    legend_desc = ['Standard deviation', "Black point: mean; bounded by min,max", "Median", "Ground Truth value",
                    "(Ground Truth value)/1000 (0.1%)"]
     if mode == PMBENCH_MODE:
         legend_tuple.append(green_line)
@@ -188,15 +189,24 @@ def generate_figure(use_period, data_dict: dict, mode: str, n: str):
 
 def main():
     args = parse_args()
+    if args.latex:
+        matplotlib.use("pgf")
+        matplotlib.rcParams.update({
+            "pgf.texsystem": "pdflatex",
+            'font.family': 'serif',
+            'text.usetex': True,
+            'pgf.rcfonts': False,
+        })
     parent_path, count, n, data = get_data(args)
     fig = generate_figure(count, data, args.mode, n)
-    fig.show()
+    if not args.latex:
+        fig.show()
     # fig.savefig(parent_path + '/stats.png')
     output_path = Path(args.output_dir).resolve()
     assert output_path.is_dir()
     if not output_path.exists():
         output_path.mkdir()
-    fig.savefig(f"{output_path.as_posix()}/{args.mode}_n{n}_stats.png")
+    fig.savefig(f"{output_path.as_posix()}/{args.mode}_n{n}_stats.{'pgf' if args.latex else 'png'}")
 
 
 if __name__ == "__main__":
