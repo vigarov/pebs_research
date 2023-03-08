@@ -136,9 +136,11 @@ def generate_figure(use_period, data_dict: dict, mode: str, n: str):
         elif metric == "read":
             scaled_opt = opt_reads / 1000
             curr_ax.set_ylabel('Nb. of loads', ha='left', y=1.1, rotation=0, labelpad=0)
+            curr_ax.set_title("Loads")
         elif metric == "write":
             scaled_opt = opt_writes / 1000
             curr_ax.set_ylabel('Nb. of stores', ha='left', y=1.1, rotation=0, labelpad=0)
+            curr_ax.set_title("Stores")
         else:
             assert metric == "count"
             scaled_opt = opt_count / 1000
@@ -201,6 +203,8 @@ def main():
     fig = generate_figure(count, data, args.mode, n)
     if not args.latex:
         fig.show()
+    #else:
+    #    fig.set_size_inches(w=9,h=9) # 5.95114 gotten by executing \printinunitsof{in}\prntlen{\textwidth} in latex
     # fig.savefig(parent_path + '/stats.png')
     output_path = Path(args.output_dir).resolve()
     assert output_path.is_dir()
