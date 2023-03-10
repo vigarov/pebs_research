@@ -43,7 +43,7 @@ class Algorithm(ABC):
 
     def __init__(self, page_cache_size):
         super().__init__()
-        self._page_cache_size = page_cache_size
+        self.page_cache_size = page_cache_size
 
     @abstractmethod
     def consume(self, x: MemoryAddress, count_stamp:int):
@@ -59,5 +59,7 @@ class Algorithm(ABC):
     def __str__(self):
         raise NotImplementedError
 
-
+    @abstractmethod
+    def get_temperature_list(self):
+        raise NotImplementedError
 

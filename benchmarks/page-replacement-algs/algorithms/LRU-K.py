@@ -25,7 +25,7 @@ class LRU_K(Algorithm):
         self.K = K
 
     def __cache_full(self):
-        return len(self.page_cache) == super()._page_cache_size
+        return len(self.page_cache) == super().page_cache_size
 
     def consume(self, x: MemoryAddress, count_stamp: int):
         associated_page = Page(page_start_from_mem_address(x))

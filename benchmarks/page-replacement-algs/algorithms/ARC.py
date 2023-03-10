@@ -26,7 +26,7 @@ class ARC(Algorithm):
             assert not in_li[B2]  # Sanity check
             # Adapt p
             delta_1 = 1. if len(self.lists[B1]) >= len(self.lists[B2]) else len(self.lists[B2]) / len(self.lists[B1])
-            self.p = min(self.p + delta_1, self._page_cache_size)
+            self.p = min(self.p + delta_1, self.page_cache_size)
             # Replace
             self.__replace(x)
             # Move from B1 to MRU in T2
@@ -35,25 +35,25 @@ class ARC(Algorithm):
         elif in_li[B2]:
             # Adapt p
             delta_2 = 1. if len(self.lists[B2]) >= len(self.lists[B1]) else len(self.lists[B1]) / len(self.lists[B2])
-            self.p = min(self.p - delta_2, self._page_cache_size)
+            self.p = min(self.p - delta_2, self.page_cache_size)
             # Replace
             self.__replace(x)
             # Move from B2 to MRU in T2
             self.lists[B2].remove(associated_page)
             self.lists[T2].insert(0, associated_page)
         else:
-            if len(self.lists[T1]) + len(self.lists[B1]) == self._page_cache_size:
-                if len(self.lists[T1]) < self._page_cache_size:
+            if len(self.lists[T1]) + len(self.lists[B1]) == self.page_cache_size:
+                if len(self.lists[T1]) < self.page_cache_size:
                     self.lists[B1].pop()  # Remove B1 LRU
                     self.__replace(x)
                 else:
                     # B1 is empty
                     self.lists[T1].pop()  # Delete LRU in T1
             else:
-                assert len(self.lists[T1]) + len(self.lists[B1]) < self._page_cache_size
+                assert len(self.lists[T1]) + len(self.lists[B1]) < self.page_cache_size
                 total_len = len(self.lists[T1]) + len(self.lists[B1]) + len(self.lists[T2]) + len(self.lists[B2])
-                if total_len >= self._page_cache_size:
-                    if total_len == 2 * self._page_cache_size:
+                if total_len >= self.page_cache_size:
+                    if total_len == 2 * self.page_cache_size:
                         self.lists[B2].pop()  # Remove B2 LRU
                     self.__replace(x)
             # Put in MRU of T1
