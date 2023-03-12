@@ -33,6 +33,9 @@ class Page:
     def __eq__(self, other):
         return self.base == other.base
 
+    def __str__(self):
+        return str(self.base)
+
 
 def page_start_from_mem_address(x):
     # https://stackoverflow.com/questions/6387771/get-starting-address-of-a-memory-page-in-linux
@@ -46,7 +49,7 @@ class Algorithm(ABC):
         self.page_cache_size = page_cache_size
 
     @abstractmethod
-    def consume(self, x: MemoryAddress, count_stamp:int):
+    def consume(self, x: MemoryAddress):
         """
         Method used for the algorithm to update itself whenever a memory access is issued
         :param count_stamp: the count at which the access occurs - equivalent for timestamp

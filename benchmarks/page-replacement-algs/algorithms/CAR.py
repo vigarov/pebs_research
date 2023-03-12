@@ -10,7 +10,7 @@ class CAR(Algorithm):
         self.lists = [[], [], [], []]  # t1,t2,b1,b2
         self.reference_bits = {}
 
-    def consume(self, x: MemoryAddress, count_stamp: int):
+    def consume(self, x: MemoryAddress):
         associated_page = Page(page_start_from_mem_address(x))
         in_li = [(associated_page in tb_i) for tb_i in self.lists]
         if in_li[T1] or in_li[T2]:
@@ -39,9 +39,9 @@ class CAR(Algorithm):
                 # History hit
                 # Adapt
                 if in_li[B1]:
-                    self.p = min(self.p + max(1., len(self.lists[B2]) / len(self.lists[B1])), self.page_cache_size)
+                    self.p = min(self.p + max(1., len(self.lists[B2]) // len(self.lists[B1])), self.page_cache_size)
                 else:
-                    self.p = max(self.p - max(1., len(self.lists[B1]) / len(self.lists[B2])), 0)
+                    self.p = max(self.p - max(1., len(self.lists[B1]) // len(self.lists[B2])), 0)
                 # Move page to tail of T2
                 self.lists[T2].append(associated_page)
                 self.reference_bits[associated_page] = 0
@@ -50,6 +50,7 @@ class CAR(Algorithm):
         found = False
         while not found:
             if len(self.lists[T1]) >= max(1, self.p):
+                # T1 is oversized
                 t1_head = self.lists[T1].pop(0)
                 if not self.reference_bits[t1_head]:
                     found = True
@@ -58,6 +59,7 @@ class CAR(Algorithm):
                     self.reference_bits[t1_head] = False
                     self.lists[T2].append(t1_head)
             else:
+                # T2 is oversized
                 t2_head = self.lists[T2].pop(0)
                 if not self.reference_bits[t2_head]:
                     found = True
@@ -65,3 +67,11 @@ class CAR(Algorithm):
                 else:
                     self.reference_bits[t2_head] = False
                     self.lists[T2].append(t2_head)
+
+    def get_temperature_list(self):
+        # The order is T_1^0,T_2^0,T_1^1,T2^1
+        t1, t2 = self.lists[T1].copy(), self.lists[T2].copy()
+        return [page for page in t1 if not self.reference_bits[page]] + \
+            [page for page in t2 if not self.reference_bits[page]] +\
+            [page for page in t1 if self.reference_bits[page]] + \
+            [page for page in t2 if self.reference_bits[page]]
