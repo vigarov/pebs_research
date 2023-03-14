@@ -4,9 +4,9 @@ from abc import ABC, abstractmethod
 class MemoryAddress:
     def __init__(self, x):
         try:
-            self.address = int(x)
-        except ValueError:
             self.address = int(x, 16)
+        except ValueError as e:
+            print(e, "Couldn't create Memory Address with x=", x)
         else:
             print("error parsing mem adress", x)
 
@@ -15,7 +15,6 @@ class MemoryAddress:
 
     def __int__(self):
         return self.address
-
 
 
 PAGE_SIZE = 4096  # 4K
@@ -28,7 +27,7 @@ class Page:
 
     def __contains__(self, item):
         mem_address = MemoryAddress(item)
-        return self.base < mem_address.address < self.base + self.__size
+        return self.base <= mem_address.address < self.base + self.__size
 
     def __eq__(self, other):
         return self.base == other.base
@@ -39,8 +38,9 @@ class Page:
 
 def page_start_from_mem_address(x):
     # https://stackoverflow.com/questions/6387771/get-starting-address-of-a-memory-page-in-linux
-    assert isinstance(x,MemoryAddress)
-    return x.address & ~(PAGE_SIZE-1)
+    assert isinstance(x, MemoryAddress)
+    return x.address & ~(PAGE_SIZE - 1)
+
 
 class Algorithm(ABC):
 
@@ -49,11 +49,10 @@ class Algorithm(ABC):
         self.page_cache_size = page_cache_size
 
     @abstractmethod
-    def consume(self, x: MemoryAddress):
+    def consume(self, page: Page):
         """
         Method used for the algorithm to update itself whenever a memory access is issued
-        :param count_stamp: the count at which the access occurs - equivalent for timestamp
-        :param x: the memory address
+        :param page: the page the accessed memory address is in
         :return: nothing
         """
         raise NotImplementedError
@@ -66,3 +65,10 @@ class Algorithm(ABC):
     def get_temperature_list(self):
         raise NotImplementedError
 
+    @abstractmethod
+    def is_page_fault(self, page: Page):
+        raise NotImplementedError
+
+    @abstractmethod
+    def name(self):
+        raise NotImplementedError

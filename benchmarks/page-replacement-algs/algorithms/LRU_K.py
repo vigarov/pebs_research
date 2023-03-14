@@ -1,4 +1,4 @@
-from GenericAlgorithm import *
+from algorithms.GenericAlgorithm import *
 
 
 class LRU_K(Algorithm):
@@ -17,7 +17,7 @@ class LRU_K(Algorithm):
 
     """
 
-    def __init__(self, K, page_cache_size, CRP, infinite_history):
+    def __init__(self, page_cache_size, K, CRP, infinite_history):
         super().__init__(page_cache_size)
         assert K >= 1 and page_cache_size > 0
         self.page_cache = []
@@ -30,8 +30,7 @@ class LRU_K(Algorithm):
     def __cache_full(self):
         return len(self.page_cache) == self.page_cache_size
 
-    def consume(self, x: MemoryAddress):
-        associated_page = Page(page_start_from_mem_address(x))
+    def consume(self, associated_page: Page):
         hist_p = self.histories[associated_page]
         self.count_stamp += 1
         if hist_p is None:
@@ -80,3 +79,9 @@ class LRU_K(Algorithm):
             temperature_list.append(victim)
             cache_copy.remove(victim)  # Ok to do so, since cache should be a set, aka a page is present only once
         return temperature_list
+
+    def is_page_fault(self, page: Page):
+        return page not in self.page_cache
+
+    def name(self):
+        return "LRU-K"

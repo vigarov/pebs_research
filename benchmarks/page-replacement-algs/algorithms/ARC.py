@@ -1,4 +1,4 @@
-from GenericAlgorithm import *
+from algorithms.GenericAlgorithm import *
 
 T1, T2, B1, B2 = tuple(range(4))
 
@@ -9,8 +9,7 @@ class ARC(Algorithm):
         self.p = 0
         self.lists = [[], [], [], []]  # t1,t2,b1,b2; 0=MRU, len=LRU
 
-    def consume(self, x: MemoryAddress):
-        associated_page = Page(page_start_from_mem_address(x))
+    def consume(self, associated_page: Page):
         in_li = [(associated_page in tb_i) for tb_i in self.lists]
         if in_li[T1] or in_li[T2]:
             assert not in_li[B1] and not in_li[B2]  # Sanity check
@@ -77,3 +76,8 @@ class ARC(Algorithm):
         # (in order, LRU is last = coldest )
         return self.lists[T1][::-1] + self.lists[T2][::-1]
 
+    def is_page_fault(self, page: Page):
+        return page not in self.lists[T1] and page not in self.lists[T2]
+
+    def name(self):
+        return "ARC"
