@@ -213,7 +213,7 @@ def main():
     assert output_path.is_dir()
     if not output_path.exists():
         output_path.mkdir()
-    fig.savefig(f"{output_path.as_posix()}/{'poster_two' if args.poster else ''}{args.mode}_n{n}_stats.{'pgf' if args.latex else 'png'}")
+    fig.savefig(f"{output_path.as_posix()}/{'poster_two_' if args.poster else ''}{args.mode}_n{n}_stats.{'pgf' if args.latex else ('svg' if args.poster else'png')}")
 
 
 if __name__ == "__main__":
