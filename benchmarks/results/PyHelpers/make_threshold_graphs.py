@@ -103,7 +103,7 @@ def generate_figure(use_period, data_dict: dict, mode: str, n: str, poster):
     opt_writes = opt_count - opt_reads
     opt_ratio = float(opt_reads / opt_writes)
     plt.rcParams.update({'figure.autolayout': True})
-    fig, axs = plt.subplots(len(data_dict.values()) if not poster else 2, figsize=(12, 10))
+    fig, axs = plt.subplots(len(data_dict.values()) if not poster else 2, figsize=(12, 10) if not poster else (14,7) )
     fig.suptitle(
         f"{'Period' if use_period else 'Frequency'} thresholds comparison using different metrics\nN={n} runs of {mode} benchmark per threshold")
     at = 0
@@ -206,8 +206,6 @@ def main():
     fig = generate_figure(count, data, args.mode, n,args.poster)
     if not args.latex:
         fig.show()
-    if args.poster:
-        fig.set_size_inches(w=16.72783, h=(8.62205/2))
     #else:
     #    fig.set_size_inches(w=9,h=9) # 5.95114 gotten by executing \printinunitsof{in}\prntlen{\textwidth} in latex
     # fig.savefig(parent_path + '/stats.png')
@@ -215,7 +213,7 @@ def main():
     assert output_path.is_dir()
     if not output_path.exists():
         output_path.mkdir()
-    fig.savefig(f"{output_path.as_posix()}/{'poster_' if args.poster else ''}{args.mode}_n{n}_stats.{'pgf' if args.latex else 'png'}")
+    fig.savefig(f"{output_path.as_posix()}/{'poster_only_one_' if args.poster else ''}{args.mode}_n{n}_stats.{'pgf' if args.latex else 'png'}")
 
 
 if __name__ == "__main__":
