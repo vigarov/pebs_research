@@ -20,6 +20,7 @@ def parse_args():
                              "out by looking for hints in the direcotry name.", default='auto')
     parser.add_argument('-o', '--output-dir', help='Output directory (backslash ended)', default="figures/")
     parser.add_argument('--latex', help='Output for latex (pgf)', action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument('--poster', help='Output for poster (png)', action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument('directory', help="Parent directory where the subdirectory samples start",
                         default='pebs_stats/')
     return parser.parse_args()
@@ -91,7 +92,7 @@ OPT_COUNT_PMBENCH = 522400470
 OPT_READS_PMBENCH = 340044031
 
 
-def generate_figure(use_period, data_dict: dict, mode: str, n: str):
+def generate_figure(use_period, data_dict: dict, mode: str, n: str, poster):
     if mode == STREAM_MODE:
         opt_reads = OPT_READS_STREAM
         opt_count = OPT_COUNT_STREAM
@@ -102,11 +103,13 @@ def generate_figure(use_period, data_dict: dict, mode: str, n: str):
     opt_writes = opt_count - opt_reads
     opt_ratio = float(opt_reads / opt_writes)
     plt.rcParams.update({'figure.autolayout': True})
-    fig, axs = plt.subplots(len(data_dict.values()), figsize=(12, 10))
+    fig, axs = plt.subplots(len(data_dict.values()) if not poster else 2, figsize=(12, 10))
     fig.suptitle(
         f"{'Period' if use_period else 'Frequency'} thresholds comparison using different metrics\nN={n} runs of {mode} benchmark per threshold")
     at = 0
     for metric, data_list in data_dict.items():
+        if poster and (metric == 'read' or metric == 'write'):
+            continue
         thresholds = np.array([tuple_[0] for tuple_ in data_list])
         sorted_idx_in_order = np.argsort(thresholds)
         thresholds = thresholds[sorted_idx_in_order]
@@ -200,9 +203,11 @@ def main():
             'pgf.rcfonts': False,
         })
     parent_path, count, n, data = get_data(args)
-    fig = generate_figure(count, data, args.mode, n)
+    fig = generate_figure(count, data, args.mode, n,args.poster)
     if not args.latex:
         fig.show()
+    if args.poster:
+        fig.set_size_inches(w=16.72783, h=(8.62205/2))
     #else:
     #    fig.set_size_inches(w=9,h=9) # 5.95114 gotten by executing \printinunitsof{in}\prntlen{\textwidth} in latex
     # fig.savefig(parent_path + '/stats.png')
@@ -210,7 +215,7 @@ def main():
     assert output_path.is_dir()
     if not output_path.exists():
         output_path.mkdir()
-    fig.savefig(f"{output_path.as_posix()}/{args.mode}_n{n}_stats.{'pgf' if args.latex else 'png'}")
+    fig.savefig(f"{output_path.as_posix()}/{'poster_' if args.poster else ''}{args.mode}_n{n}_stats.{'pgf' if args.latex else 'png'}")
 
 
 if __name__ == "__main__":
