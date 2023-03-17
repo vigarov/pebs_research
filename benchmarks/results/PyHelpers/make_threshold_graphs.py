@@ -119,7 +119,8 @@ def generate_figure(use_period, data_dict: dict, mode: str, n: str, poster):
         means = np.array([tuple_[1][2] for tuple_ in data_list])[sorted_idx_in_order]
         medians = np.array([tuple_[1][3] for tuple_ in data_list])[sorted_idx_in_order]
         stddevs = np.array([tuple_[1][4] for tuple_ in data_list])[sorted_idx_in_order]
-        curr_ax = axs[at]
+        axis = at if not poster else ((at+1)%2)
+        curr_ax = axs[axis]
         curr_ax.set_xticks(np.arange(len(thresholds)))
         curr_ax.set_xticklabels(thresholds)
         stddev_error = curr_ax.errorbar(np.arange(len(thresholds)), means, stddevs, fmt='or', lw=3, capsize=5, zorder=1)
