@@ -67,10 +67,7 @@ class ARC(Algorithm):
             # Move LRU in T2 to MRU in B1
             self.lists[B2].insert(0, self.lists[T2].pop())
 
-    def __str__(self):
-        return "ARC: pages in cache (T1 U T2) (showing bases): [" + ",".join(
-            [str(page) for page in self.lists[T1] + self.lists[T2]]) + ']'
-
+x
     def get_temperature_list(self):
         # By order of eviction, T1's pages will leave first, then T2 --> temperature is very simply T1 U T2
         # (in order, LRU is last = coldest )
