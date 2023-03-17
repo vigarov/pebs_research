@@ -231,10 +231,15 @@ def main(args):
             q_list = alg_to_queues[alg_dict_name][1]
 
             data_gathering_processes.append(Process(target=alg_producer,
-                        args=()))
+                        args=(args.mem_trace_path.resolve().as_posix(),
+                              div,
+                              q_list,
+                              )))
 
     # Spawn all comparison processes
     comparison_processes = []
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         prog="ptrace_data",
