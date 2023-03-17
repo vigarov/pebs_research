@@ -204,6 +204,8 @@ def main():
         })
     elif args.poster:
         matplotlib.rcParams.update({'font.size': 15})
+        matplotlib.rcParams['pdf.fonttype'] = 42
+        matplotlib.rcParams['ps.fonttype'] = 42
     parent_path, count, n, data = get_data(args)
     fig = generate_figure(count, data, args.mode, n,args.poster)
     if not args.latex:
@@ -215,7 +217,7 @@ def main():
     assert output_path.is_dir()
     if not output_path.exists():
         output_path.mkdir()
-    fig.savefig(f"{output_path.as_posix()}/{'poster_' if args.poster else ''}{args.mode}_n{n}_stats.{'pgf' if args.latex else ('svg' if args.poster else'png')}")
+    fig.savefig(f"{output_path.as_posix()}/{'poster_' if args.poster else ''}{args.mode}_n{n}_stats.{'pgf' if args.latex else ('pdf' if args.poster else'png')}")
 
 
 if __name__ == "__main__":
