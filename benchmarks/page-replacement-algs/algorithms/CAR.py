@@ -1,4 +1,4 @@
-from GenericAlgorithm import *
+from algorithms.GenericAlgorithm import *
 
 T1, T2, B1, B2 = tuple(range(4))
 

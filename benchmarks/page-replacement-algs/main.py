@@ -7,7 +7,7 @@ from algorithms.CAR import CAR
 from algorithms.LRU_K import LRU_K
 from algorithms.CLOCK import CLOCK
 import argparse
-from multiprocessing import Process, shared_memory, Barrier,Queue
+from multiprocessing import Process, shared_memory, Barrier, Queue
 
 
 def nn(*arguments):
@@ -48,7 +48,7 @@ def overall_manhattan_distance(tl1, baseline_tl, punish=False):
 
 
 def alg_producer(file_path: str, alg, requested_sample_rate: int, change_queues,
-                 own_data_shared_mem_basename, gt_ratio, is_ratio=False):
+                 own_data_shared_mem_basename, gt_ratio=-1):
     assert 0 < requested_sample_rate <= 1
     data = {PTCHANGE: [], PFAULTS: 0}
     seen = 0  # count the total considered and seen memory instructions
@@ -67,7 +67,7 @@ def alg_producer(file_path: str, alg, requested_sample_rate: int, change_queues,
                     (gt_ratio * (1 - approximation_factor) <= (considered_loads / considered_stores) and not is_load)
                     or (considered_loads / considered_stores) <= gt_ratio * (1 + approximation_factor) and is_load)
 
-        consideration_method = should_consider if is_ratio else should_consider_ratio
+        consideration_method = should_consider if gt_ratio >= 0 else should_consider_ratio
 
         while (line := mtf.readline()) != '':
             seen += 1
@@ -165,6 +165,7 @@ REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO = 0.01
 AVERAGE_SAMPLE_RATIO = 0.05
 Q_MAX_SIZE = 1024
 
+
 def main(args):
     K = 2
     MAX_PAGE_CACHE_SIZE = 507569  # pages = `$ ulimit -l`/4  ~= 2GB mem
@@ -178,7 +179,6 @@ def main(args):
     samples_div = [i / 100 for i in range(0, 101, 20) if i != 0]
     samples_div = [REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO, AVERAGE_SAMPLE_RATIO] + samples_div
     algs = [LRU_K(page_cache_size, K, 0, False), CLOCK(page_cache_size, K), ARC(page_cache_size), CAR(page_cache_size)]
-    name_to_idx_mapping = dict([(alg.name(),idx) for (idx,alg) in enumerate(algs)])
     # Each standalone alg will be compared with, 1) standalone with full memory trace, 2) intra w/ same mem trace,
     # 3) inter with same mem_trace, except for standalone with full memtrace, as it doesn't make sense comparing it
     # with himself --> for all divs, we have only 3 queues, for FULL_MEM_TRACE, we have 2+len(samples_div)-1 Qs.
@@ -191,53 +191,92 @@ def main(args):
     for alg in algs:
         for div in samples_div:
             if div != 1:
-                compared_alg,baseline_alg = f"{alg.name()}_{str(div)}", f"{alg.name()}_1.0"
-                non_ratio_comparisons.append(f"{compared_alg} vs {baseline_alg}")
-                alg_to_queues[compared_alg] = alg_to_queues.get(compared_alg,0) + 1
-                alg_to_queues[baseline_alg] = alg_to_queues.get(baseline_alg, 0) + 1
+                compared_alg, baseline_alg_name = f"{alg.name()}_{str(div)}", f"{alg.name()}_1.0"
+                non_ratio_comparisons.append(f"{compared_alg} vs {baseline_alg_name}")
+                alg_to_queues[compared_alg] = alg_to_queues.get(compared_alg, 0) + 1
+                alg_to_queues[baseline_alg_name] = alg_to_queues.get(baseline_alg_name, 0) + 1
         # 1).ratio
         if args.ratio_realistic:
-            compared_alg,baseline_alg = f"{alg.name()}_{REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO}_R", f"{alg.name()}_{REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO}"
-            ratio_comparisons.append(f"{compared_alg} vs {baseline_alg}")
-            alg_to_queues[compared_alg] = alg_to_queues.get(compared_alg,0) + 1
-            alg_to_queues[baseline_alg] = alg_to_queues.get(baseline_alg, 0) + 1
+            compared_alg, baseline_alg_name = f"{alg.name()}_{REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO}_R", f"{alg.name()}_{REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO}"
+            ratio_comparisons.append(f"{compared_alg} vs {baseline_alg_name}")
+            alg_to_queues[compared_alg] = alg_to_queues.get(compared_alg, 0) + 1
+            alg_to_queues[baseline_alg_name] = alg_to_queues.get(baseline_alg_name, 0) + 1
 
     # 2)
     for alg1, alg2 in zip(algs[::2], algs[1::2]):
         for div in samples_div:
-            compared_alg,baseline_alg = f"{alg1.name()}_{str(div)}", f"{alg2.name()}_{str(div)}"
-            non_ratio_comparisons.append(f"{compared_alg} vs {baseline_alg}")
-            alg_to_queues[compared_alg] = alg_to_queues.get(compared_alg,0) + 1
-            alg_to_queues[baseline_alg] = alg_to_queues.get(baseline_alg, 0) + 1
+            compared_alg, baseline_alg_name = f"{alg1.name()}_{str(div)}", f"{alg2.name()}_{str(div)}"
+            non_ratio_comparisons.append(f"{compared_alg} vs {baseline_alg_name}")
+            alg_to_queues[compared_alg] = alg_to_queues.get(compared_alg, 0) + 1
+            alg_to_queues[baseline_alg_name] = alg_to_queues.get(baseline_alg_name, 0) + 1
 
     # 3)
     for alg1, alg2 in zip(algs[:2], algs[2:]):
         for div in samples_div:
-            compared_alg,baseline_alg = f"{alg1.name()}_{str(div)}", f"{alg2.name()}_{str(div)}"
-            non_ratio_comparisons.append(f"{compared_alg} vs {baseline_alg}")
-            alg_to_queues[compared_alg] = alg_to_queues.get(compared_alg,0) + 1
-            alg_to_queues[baseline_alg] = alg_to_queues.get(baseline_alg, 0) + 1
+            compared_alg, baseline_alg_name = f"{alg1.name()}_{str(div)}", f"{alg2.name()}_{str(div)}"
+            non_ratio_comparisons.append(f"{compared_alg} vs {baseline_alg_name}")
+            alg_to_queues[compared_alg] = alg_to_queues.get(compared_alg, 0) + 1
+            alg_to_queues[baseline_alg_name] = alg_to_queues.get(baseline_alg_name, 0) + 1
 
-    assert len(ratio_comparisons)+len(non_ratio_comparisons) == sum(alg_to_queues.values())
+    assert 2 * (len(ratio_comparisons) + len(non_ratio_comparisons)) == sum(alg_to_queues.values())
 
-    for k,v in alg_to_queues.items():
+    for k, v in alg_to_queues.items():
         alg_to_queues[k] = (0, [Queue(maxsize=Q_MAX_SIZE) for _ in range(v)])
 
-    #Spawn all algorithm processes
+    print("Creating algorithm processes")
+    # Create all algorithm processes
     data_gathering_processes = []
     for alg in algs:
         for div in samples_div:
-            alg_dict_name = f"{alg.name()}_{str(div)}"
-            q_list = alg_to_queues[alg_dict_name][1]
+            alg_div = f"{alg.name()}_{str(div)}"
+            q_list = alg_to_queues[alg_div][1]
 
             data_gathering_processes.append(Process(target=alg_producer,
-                        args=(args.mem_trace_path.resolve().as_posix(),
-                              div,
-                              q_list,
-                              )))
+                                                    args=(args.mem_trace_path.resolve().as_posix(),
+                                                          div,
+                                                          q_list,
+                                                          alg_div)))
+        if args.ratio_realistic:
+            ratio_div_alg_name = f"{alg.name()}_{str(REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO)}"
+            ratio_alg = ratio_div_alg_name + "_R"
+            data_gathering_processes.append(Process(target=alg_producer,
+                                                    args=(args.mem_trace_path.resolve().as_posix(),
+                                                          REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO,
+                                                          alg_to_queues[ratio_alg][1],
+                                                          ratio_alg,
+                                                          algs.db[args.mem_trace_path.resolve().as_posix()]['ratio'])))
 
+    print("Creating and starting comparison processes")
     # Spawn all comparison processes
     comparison_processes = []
+    for comparison in non_ratio_comparisons + ratio_comparisons:
+        comp_alg_name, baseline_alg_name = tuple(comparison.split(" vs "))
+        (comp_qhead, comp_qlist), (baseline_qhead, baseline_qlist) = alg_to_queues[comp_alg_name], alg_to_queues[
+            baseline_alg_name]
+        assert comp_qhead < len(comp_qlist) and baseline_qhead < len(baseline_qlist)
+        comp_q, baseline_q = comp_qlist[comp_qhead], baseline_qlist[baseline_qhead]
+        alg_to_queues[comp_alg_name] = (comp_qhead + 1, comp_qlist)
+        alg_to_queues[baseline_alg_name] = (baseline_qhead + 1, baseline_qlist)
+        process = Process(target=in_tra_ter_consumer,
+                          args=(
+                              comp_alg_name,
+                              baseline_alg_name,
+                              comp_q,
+                              baseline_q,
+                              comparison
+                          ))
+        comparison_processes.append(process)
+        process.start()
+
+    # Start all algorithms
+    print("Starting algorithm processes")
+    for p in data_gathering_processes:
+        p.start()
+
+    # Join processes and gather wb data
+    print("Joining algorithm processes")
+    for p in data_gathering_processes:
+        p.join()
 
 
 def parse_args():

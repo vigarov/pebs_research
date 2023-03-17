@@ -1,4 +1,4 @@
-from GenericAlgorithm import *
+from algorithms.GenericAlgorithm import *
 
 T1, T2, B1, B2 = tuple(range(4))
 
@@ -67,7 +67,6 @@ class ARC(Algorithm):
             # Move LRU in T2 to MRU in B1
             self.lists[B2].insert(0, self.lists[T2].pop())
 
-
     def get_temperature_list(self):
         # By order of eviction, T1's pages will leave first, then T2 --> temperature is very simply T1 U T2
         # (in order, LRU is last = coldest )
@@ -75,6 +74,10 @@ class ARC(Algorithm):
 
     def is_page_fault(self, page: Page):
         return page not in self.lists[T1] and page not in self.lists[T2]
+
+    def __str__(self):
+        return "ARC: pages in cache (T1 U T2) (showing bases): [" + ",".join(
+            [str(page) for page in self.lists[T1] + self.lists[T2]]) + ']'
 
     def name(self):
         return "ARC"
