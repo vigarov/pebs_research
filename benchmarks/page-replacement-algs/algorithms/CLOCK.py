@@ -1,4 +1,4 @@
-from algorithms.GenericAlgorithm import *
+from GenericAlgorithm import *
 
 
 class CLOCK(Algorithm):

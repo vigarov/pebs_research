@@ -1,4 +1,4 @@
-from algorithms.GenericAlgorithm import *
+from GenericAlgorithm import *
 
 T1, T2, B1, B2 = tuple(range(4))
 
@@ -67,7 +67,7 @@ class ARC(Algorithm):
             # Move LRU in T2 to MRU in B1
             self.lists[B2].insert(0, self.lists[T2].pop())
 
-x
+
     def get_temperature_list(self):
         # By order of eviction, T1's pages will leave first, then T2 --> temperature is very simply T1 U T2
         # (in order, LRU is last = coldest )
