@@ -152,7 +152,7 @@ if __name__ == "__main__":
                 CAR(page_cache_size)]
     pfaults_arr = [0] * 4
     with open('/home/vigarov/research/benchmarks/results/pmbench/mem_trace_07-02-2023_17-36-07.log', 'r') as file:
-        count = 15_000_000
+        count = 5_000_000
         while (line := file.readline()) != '' and count > 0:
             if count % 1_000_000 == 0:
                 print(f"Reached count={count}")

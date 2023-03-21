@@ -1,3 +1,4 @@
+import copy
 import functools
 import gzip
 import json
@@ -12,7 +13,6 @@ from algorithms.LRU_K import LRU_K
 from algorithms.CLOCK import CLOCK
 import argparse
 from multiprocessing import Process, Queue
-from threading import Thread
 import os
 import shutil
 
@@ -53,7 +53,7 @@ def overall_manhattan_distance(tl1, baseline_tl, punish=False):
     for hotness, page in page_sorted_tl2:
         idx_in_tl1 = bsearch(page, page_sorted_tl1)
         if idx_in_tl1 != -1:
-            sum_ += abs(hotness - page_sorted_tl2[idx_in_tl1][0])
+            sum_ += abs(hotness - page_sorted_tl1[idx_in_tl1][0])
         elif punish:
             sum_ += hotness
     return sum_
@@ -93,12 +93,10 @@ def alg_producer(file_path: str, alg, requested_sample_rate: int, change_queues,
         while (line := mtf.readline()) != '':
             seen += 1
             is_load = False
-            if seen % 5_000_000 == 0:
-                print(f"{id_str} - Reached seen = {seen}")
+            if seen % 2_000_000 == 0:
+                print(f"{id_str} - Reached seen = {seen}\nptchange_at={ptchange_at}, ptchange_count={ptchange_count},buff_size={nparrsize}")
             if line[0] == 'R':
                 is_load = True
-            else:
-                assert line[0] == 'W'
             mem_address = int(line[1:], 16)
             page_base = page_start_from_mem_address(mem_address)
             pfault = alg.is_page_fault(page_base)
@@ -145,7 +143,7 @@ DESC_STR = 'desc_string'
 def in_tra_ter_consumer(producer_q_1, producer_q_baseline, savedir):
     nn(producer_q_1, producer_q_baseline, savedir)
     alg_stop, baseline_stop = False, False
-    id_str = f"{os.getpid()}:{threading.current_thread().ident}"
+    id_str = f"{os.getpid()}:{threading.get_native_id()}"
     buff_size = MAX_BUFFER_SIZE_BYTES // 4  # 4 == number of bytes of np.uintc (=== unsigned int --> 32bit)
     diffs, diffs_at, diffs_count = np.zeros(buff_size, dtype=np.uintc), 0, 0
     tuple_save = functools.partial(add_tuple_to_np_arr_and_save_if_necessary, diffs, buff_size, id_str, savedir)
@@ -174,8 +172,8 @@ def in_tra_ter_consumer(producer_q_1, producer_q_baseline, savedir):
                 (at, curr_alg_tl) = producer_q_1.get()
             elif q == producer_q_baseline:
                 (at_baseline, curr_baseline_tl) = producer_q_baseline.get()
-    # Append the rest of the non-empty q
-    if baseline_stop or alg_stop:
+    if not (baseline_stop and alg_stop):
+        # Append the rest of the non-empty Q ; (else: stopped at the same time, no non-empty Qs)
         if baseline_stop:
             assert producer_q_baseline.empty() and not alg_stop
             q_to_empty = producer_q_1
@@ -273,30 +271,34 @@ def main(args):
     print("Creating algorithm processes")
     # Create all algorithm processes
     data_gathering_processes = []
+    standalone_dir = Path(base_dir + "standalone")
+    standalone_dir.mkdir(exist_ok=False, parents=False)
+    standalone_dir_as_posix = standalone_dir.resolve().as_posix() + '/'
+
     for alg in algs:
         for div in samples_div:
             alg_with_div = f"{alg.name()}_{str(div)}"
-            alg_dir = Path(base_dir + alg_with_div)
+            alg_dir = Path(standalone_dir_as_posix + alg_with_div)
             alg_dir.mkdir(exist_ok=False, parents=False)
             q_list = alg_to_queues[alg_with_div][1]
-            data_gathering_processes.append(Thread(target=alg_producer,
-                                                   args=(args.mem_trace_path.resolve().as_posix(),
-                                                         alg,
-                                                         div,
-                                                         q_list,
-                                                         alg_dir.resolve().as_posix() + '/')))
+            data_gathering_processes.append(Process(target=alg_producer,
+                                                    args=(args.mem_trace_path.resolve().as_posix(),
+                                                          copy.deepcopy(alg),
+                                                          div,
+                                                          q_list,
+                                                          alg_dir.resolve().as_posix() + '/')))
         if args.ratio_realistic:
             ratio_div_alg_name = f"{alg.name()}_{str(REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO)}"
             ratio_alg = ratio_div_alg_name + "_R"
-            alg_dir = Path(base_dir + ratio_alg)
+            alg_dir = Path(standalone_dir_as_posix + ratio_alg)
             alg_dir.mkdir(exist_ok=False, parents=False)
-            data_gathering_processes.append(Thread(target=alg_producer,
-                                                   args=(args.mem_trace_path.resolve().as_posix(),
-                                                         alg,
-                                                         REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO,
-                                                         alg_to_queues[ratio_alg][1],
-                                                         alg_dir.resolve().as_posix() + '/',
-                                                         args.db[args.mem_trace_path.resolve().as_posix()]['ratio'])))
+            data_gathering_processes.append(Process(target=alg_producer,
+                                                    args=(args.mem_trace_path.resolve().as_posix(),
+                                                          copy.deepcopy(alg),
+                                                          REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO,
+                                                          alg_to_queues[ratio_alg][1],
+                                                          alg_dir.resolve().as_posix() + '/',
+                                                          args.db[args.mem_trace_path.resolve().as_posix()]['ratio'])))
 
     print("Creating and starting comparison processes")
     # Spawn all comparison processes
@@ -316,12 +318,12 @@ def main(args):
         alg_to_queues[baseline_alg_name] = (baseline_qhead + 1, baseline_qlist)
         save_dir = Path(comp_dir_as_posix + comp_alg_name + '_vs_' + baseline_alg_name)
         save_dir.mkdir(exist_ok=False, parents=False)
-        process = Thread(target=in_tra_ter_consumer,
-                         args=(
-                             comp_q,
-                             baseline_q,
-                             save_dir.resolve().as_posix() + '/'
-                         ))
+        process = Process(target=in_tra_ter_consumer,
+                          args=(
+                              comp_q,
+                              baseline_q,
+                              save_dir.resolve().as_posix() + '/'
+                          ))
         comparison_processes.append(process)
         process.start()
 
