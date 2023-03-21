@@ -30,15 +30,15 @@ class LRU_K(Algorithm):
     def __cache_full(self):
         return len(self.page_cache) == self.page_cache_size
 
-    def consume(self, associated_page: Page):
-        hist_p = self.histories[associated_page]
+    def consume(self, associated_page: int):
+        hist_p = self.histories.get(associated_page)
         self.count_stamp += 1
         if hist_p is None:
             hist_p = [self.count_stamp] + [0] * (self.K - 1)
 
         if associated_page in self.page_cache:
             # Always have correlated references, see comment in class doc
-            for i in range(self.K):
+            for i in range(1,self.K):
                 hist_p[i] = hist_p[i - 1]
             hist_p[0] = self.count_stamp
         else:
@@ -69,7 +69,7 @@ class LRU_K(Algorithm):
 
     def __str__(self):
         return "LRU_K: pages in cache (showing bases): [" + ",".join(
-            [str(MemoryAddress(page.base)) for page in self.page_cache]) + ']'
+            [hex(page_base) for page_base in self.page_cache]) + ']'
 
     def get_temperature_list(self):
         temperature_list = []
@@ -80,8 +80,8 @@ class LRU_K(Algorithm):
             cache_copy.remove(victim)  # Ok to do so, since cache should be a set, aka a page is present only once
         return temperature_list
 
-    def is_page_fault(self, page: Page):
+    def is_page_fault(self, page: int):
         return page not in self.page_cache
 
     def name(self):
-        return "LRU-K"
+        return "LRU_"+str(self.K)

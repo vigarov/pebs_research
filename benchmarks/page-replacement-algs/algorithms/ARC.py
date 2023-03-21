@@ -9,37 +9,41 @@ class ARC(Algorithm):
         self.p = 0
         self.lists = [[], [], [], []]  # t1,t2,b1,b2; 0=MRU, len=LRU
 
-    def consume(self, associated_page: Page):
+    def consume(self, associated_page: int):
         in_li = [(associated_page in tb_i) for tb_i in self.lists]
+        # Case I
         if in_li[T1] or in_li[T2]:
             assert not in_li[B1] and not in_li[B2]  # Sanity check
             # Cache hit
             # Move to MRU of T2
             if in_li[T1]:
                 self.lists[T1].remove(associated_page)
-                assert associated_page not in in_li[T2]  # Sanity check
-            elif associated_page in in_li[T2]:
+                assert not in_li[T2]  # Sanity check
+            elif in_li[T2]:
                 self.lists[T2].remove(associated_page)
             self.lists[T2].insert(0, associated_page)
+        # Case II
         elif in_li[B1]:
             assert not in_li[B2]  # Sanity check
             # Adapt p
-            delta_1 = 1 if len(self.lists[B1]) >= len(self.lists[B2]) else len(self.lists[B2]) // len(self.lists[B1])
+            delta_1 = 1 if len(self.lists[B1]) >= len(self.lists[B2]) else len(self.lists[B2]) / len(self.lists[B1])
             self.p = min(self.p + delta_1, self.page_cache_size)
             # Replace
             self.__replace(associated_page)
             # Move from B1 to MRU in T2
             self.lists[B1].remove(associated_page)
             self.lists[T2].insert(0, associated_page)
+        # Case III
         elif in_li[B2]:
             # Adapt p
-            delta_2 = 1 if len(self.lists[B2]) >= len(self.lists[B1]) else len(self.lists[B1]) // len(self.lists[B2])
-            self.p = min(self.p - delta_2, self.page_cache_size)
+            delta_2 = 1 if len(self.lists[B2]) >= len(self.lists[B1]) else len(self.lists[B1]) / len(self.lists[B2])
+            self.p = max(self.p - delta_2, 0)
             # Replace
             self.__replace(associated_page)
             # Move from B2 to MRU in T2
             self.lists[B2].remove(associated_page)
             self.lists[T2].insert(0, associated_page)
+        # Case IX
         else:
             if len(self.lists[T1]) + len(self.lists[B1]) == self.page_cache_size:
                 if len(self.lists[T1]) < self.page_cache_size:
@@ -64,7 +68,7 @@ class ARC(Algorithm):
             # Move LRU in T1 to MRU in B1
             self.lists[B1].insert(0, self.lists[T1].pop())
         else:
-            # Move LRU in T2 to MRU in B1
+            # Move LRU in T2 to MRU in B2
             self.lists[B2].insert(0, self.lists[T2].pop())
 
     def get_temperature_list(self):
@@ -72,12 +76,12 @@ class ARC(Algorithm):
         # (in order, LRU is last = coldest )
         return self.lists[T1][::-1] + self.lists[T2][::-1]
 
-    def is_page_fault(self, page: Page):
+    def is_page_fault(self, page: int):
         return page not in self.lists[T1] and page not in self.lists[T2]
 
     def __str__(self):
         return "ARC: pages in cache (T1 U T2) (showing bases): [" + ",".join(
-            [str(page) for page in self.lists[T1] + self.lists[T2]]) + ']'
+            [hex(page_base) for page_base in self.lists[T1] + self.lists[T2]]) + ']'
 
     def name(self):
         return "ARC"

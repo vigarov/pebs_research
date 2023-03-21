@@ -10,7 +10,7 @@ class CAR(Algorithm):
         self.lists = [[], [], [], []]  # t1,t2,b1,b2
         self.reference_bits = {}
 
-    def consume(self, associated_page: Page):
+    def consume(self, associated_page: int):
         in_li = [(associated_page in tb_i) for tb_i in self.lists]
         if in_li[T1] or in_li[T2]:
             # Cache hit
@@ -68,14 +68,14 @@ class CAR(Algorithm):
                     self.lists[T2].append(t2_head)
 
     def get_temperature_list(self):
-        # The order is T_1^0,T_2^0,T_1^1,T2^1
+        # The order is T_1^0,T_2^0,T_1^1,T_2^1
         t1, t2 = self.lists[T1].copy(), self.lists[T2].copy()
         return [page for page in t1 if not self.reference_bits[page]] + \
             [page for page in t2 if not self.reference_bits[page]] + \
             [page for page in t1 if self.reference_bits[page]] + \
             [page for page in t2 if self.reference_bits[page]]
 
-    def is_page_fault(self, page: Page):
+    def is_page_fault(self, page: int):
         return page not in self.lists[T1] and page not in self.lists[T2]
 
     def name(self):
@@ -83,4 +83,4 @@ class CAR(Algorithm):
 
     def __str__(self):
         return "CAR: pages in cache (T1 U T2) (showing bases): [" + ",".join(
-            [str(page) for page in self.lists[T1] + self.lists[T2]]) + ']'
+            [hex(page_base) for page_base in self.lists[T1] + self.lists[T2]]) + ']'
