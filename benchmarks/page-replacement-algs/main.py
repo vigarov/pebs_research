@@ -31,10 +31,8 @@ def rm_r(path):
         os.remove(path)
 
 
-def overall_manhattan_distance(tl1, baseline_tl, punish=False):
+def overall_manhattan_distance(sorted_tl1, sorted_baseline_tl, punish=False):
     sum_ = 0
-    page_sorted_tl1 = sorted(list(enumerate(tl1)), key=lambda tpl: tpl[1])
-    page_sorted_tl2 = sorted(list(enumerate(baseline_tl)), key=lambda tpl: tpl[1])
 
     def bsearch(page, slist):
         low = 0
@@ -50,10 +48,10 @@ def overall_manhattan_distance(tl1, baseline_tl, punish=False):
                 return mid
         return -1
 
-    for hotness, page in page_sorted_tl2:
-        idx_in_tl1 = bsearch(page, page_sorted_tl1)
+    for hotness, page in sorted_baseline_tl:
+        idx_in_tl1 = bsearch(page, sorted_tl1)
         if idx_in_tl1 != -1:
-            sum_ += abs(hotness - page_sorted_tl1[idx_in_tl1][0])
+            sum_ += abs(hotness - sorted_tl1[idx_in_tl1][0])
         elif punish:
             sum_ += hotness
     return sum_
@@ -148,11 +146,12 @@ def comparison_and_standalone(shared_mem_accesses_list_name, shared_mem_access_t
             alg.ptchange_dir += '/'
             alg.ptchange = []
             alg.n_pfaults = alg.curr_pfault_distance_sum = alg.curr_non_pfault_dist_sum = 0
+            alg.cur_sorted_tl = []
         alg.prev_page_base, alg.repeat = -1, False
         alg.considered_loads, alg.considered_stores = 0, 0
 
         def should_consider():
-            return ((alg.considered_loads + alg.considered_stores) / seen) <= alg.requested_sample_rate
+            return ((alg.considered_loads + alg.considered_stores) / seen) <= alg.sample_rate
 
         def should_consider_ratio():
             return should_consider() and ((is_load and ((alg.considered_loads / alg.considered_stores) <= alg.ratio))
@@ -191,24 +190,24 @@ def comparison_and_standalone(shared_mem_accesses_list_name, shared_mem_access_t
                 if seen % 100_000_000 == 0:
                     print(
                         f"{id_str} - Reached seen = {seen}\nSR={alg.requested_sample_rate},#T={alg.considered_loads + alg.considered_stores} (#S={alg.considered_stores},#L={alg.considered_loads}{f', gt_ratio={alg.ratio}, curr_ratio={alg.considered_loads / alg.considered_stores}' if alg.ratio != -1 else ''}), n_writes={n_writes},i={i}")
-                if alg.prev_page_base == alg.page_base:
+                if alg.prev_page_base == page_base:
                     alg.repeat = True
                 else:
-                    alg.prev_page_base = alg.page_base
+                    alg.prev_page_base = page_base
                     alg.repeat = False
-                pfault = alg.is_page_fault(page_base)
+                pfault = alg.alg.is_page_fault(page_base)
                 if pfault or alg.consideration_method():
                     if is_load:
                         alg.considered_loads += 1
                     else:
                         alg.considered_stores += 1
-                    if alg.repeat_count == 1:
+                    if alg.repeat:
                         # No need to consume : all algorithms have already correctly handled the page
                         # Also no need to update running averages, as md will be 0 if prev_tl = cur_tl
                         continue
                     alg.changed = True
-                    alg.consume(page_base)
-                    new_tl = sorted(list(enumerate(alg.get_temperature_list())), key=lambda tpl: tpl[1])
+                    alg.alg.consume(page_base)
+                    new_tl = sorted(list(enumerate(alg.alg.get_temperature_list())), key=lambda tpl: tpl[1])
                     if alg.dir is not None:
                         # Must capture standalone data as well
                         md = overall_manhattan_distance(new_tl, alg.cur_sorted_tl, False)
@@ -341,17 +340,18 @@ def main(args):
                 a_split = name.split('_')
                 a_ratio = 'R' in a_split
                 if a_ratio:
-                    a_split = a_split.remove('R')
-                c_non_div_name = a_split[:-1]
-                out_alg_args[idx] = AlgWArgs(algs[alg_names.index(c_non_div_name)],
-                                             None,
-                                             float(a_split[-1]),
-                                             a_ratio)
+                    a_split.remove('R')
+                a_non_div_name = '_'.join(a_split[:-1])
+                awa = AlgWArgs(algs[alg_names.index(a_non_div_name)],
+                               None,
+                               float(a_split[-1]),
+                               args.db[args.mem_trace_path.resolve().as_posix()]['ratio'] if a_ratio else -1)
                 if name not in standalone_algs and not already_chose:
                     alg_dir = Path(standalone_dir_as_posix + name)
                     alg_dir.mkdir(exist_ok=False, parents=False)
-                    out_alg_args[idx].dir = alg_dir.resolve().as_posix() + '/'
+                    awa.dir = alg_dir.resolve().as_posix() + '/'
                     standalone_algs.add(name)
+                out_alg_args.append(awa)
             comp_save_dir = Path(comp_dir_as_posix + tpl[0] + '_vs_' + tpl[1])
             comp_save_dir.mkdir(exist_ok=False, parents=False)
             p = Process(target=comparison_and_standalone, args=(shared_mem[0].name, shared_mem[1].name, N_ITEMS,
