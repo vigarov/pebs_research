@@ -228,7 +228,7 @@ def comparison_and_standalone(shared_mem_accesses_list_name, shared_mem_access_t
             if alg.dir is not None:
                 # Save data to file:
                 save_to_file_compressed(np.array(alg.ptchange).transpose(), id_str, alg.ptchange_dir, n_writes)
-                with open(alg.own_data_save_dir + OTHER_DATA_FN, 'w') as f:
+                with open(alg.dir + OTHER_DATA_FN, 'w') as f:
                     f.write(
                         f"seen,considered_l,considered_s,pfaults,pfault_dist_average,non_pfault_dist_average\n{seen},{alg.considered_loads},{alg.considered_stores},{alg.n_pfaults},{alg.curr_pfault_distance_sum / alg.n_pfaults},{alg.curr_non_pfault_dist_sum / (alg.considered_loads + alg.considered_stores - alg.n_pfaults)}\n")
                 alg.ptchange = []
