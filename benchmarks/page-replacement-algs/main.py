@@ -70,6 +70,7 @@ def reader_process(file_to_read, shared_mem_accesses_list_name, shared_mem_acces
     assert num_alg_ready_shared_value.value != 0
     assert continue_shared_value.value
     id_str = "READER PROCESS -"
+    n = 0
     with open(file_to_read, 'r') as f:
         shared_mem_accesses_list = shared_memory.SharedMemory(create=False, name=shared_mem_accesses_list_name)
         shared_mem_access_type_list = shared_memory.SharedMemory(create=False, name=shared_mem_access_type_list_name)
@@ -88,7 +89,7 @@ def reader_process(file_to_read, shared_mem_accesses_list_name, shared_mem_acces
             return n_items
 
         def stop_condition(read):
-            return read
+            return read>800_000_000
 
         # First fill
         total_read = n_items
@@ -97,13 +98,14 @@ def reader_process(file_to_read, shared_mem_accesses_list_name, shared_mem_acces
             total_read += n_items
             setup_success = True
         while setup_success and not stop_condition(total_read):
+            print(f"{id_str} n={n}")
             # Wake Alg processes
             with shared_alg_ready_cv:
                 num_alg_ready_shared_value.value = 0
                 shared_alg_ready_cv.notify_all()
                 # Wait for them to finish
                 shared_alg_ready_cv.wait_for(lambda: num_alg_ready_shared_value.value == total_alg_processes)
-            print(f"{id_str} ALGs finished")
+            # print(f"{id_str} ALGs finished")
 
             # Wake Comparison processes
             with shared_comp_ready_cv:
@@ -116,11 +118,12 @@ def reader_process(file_to_read, shared_mem_accesses_list_name, shared_mem_acces
             else:
                 break
 
-            print(f"{id_str} READ finished, num_comp_ready_shared_value={num_comp_ready_shared_value.value}")
+            # print(f"{id_str} READ finished, num_comp_ready_shared_value={num_comp_ready_shared_value.value}")
             # Wait for comp processes to finish (could already be the case, doesn't matter)
             with shared_comp_ready_cv:
                 shared_comp_ready_cv.wait_for(lambda: num_comp_ready_shared_value.value == total_comp_processes)
-            print(f"{id_str} COMPs finished")
+            # print(f"{id_str} COMPs finished")
+            n += 1
         print("Reader process instructed to end, switching continue var")
         continue_shared_value.value = False
         # Wait for all processes to have finished and notify them it's over
@@ -132,6 +135,7 @@ def reader_process(file_to_read, shared_mem_accesses_list_name, shared_mem_acces
             shared_comp_ready_cv.wait_for(lambda: num_comp_ready_shared_value.value == total_comp_processes)
             num_comp_ready_shared_value.value = 0
             shared_comp_ready_cv.notify_all()
+
 
 
 MAX_BUFFER_SIZE_BYTES = 1 * 1024 * 1024
@@ -188,12 +192,16 @@ def alg_producer(shared_mem_accesses_list_name, shared_mem_access_type_list_name
         ptchange = []
         for i in range(n_items):
             seen += 1
-            if seen % 2_000_000 == 0:
-                print(
-                    f"{id_str} - Reached seen = {seen}\nSR={requested_sample_rate},#T={considered_loads + considered_stores} (#S={considered_stores},#L={considered_loads}{f', gt_ratio={gt_ratio}, curr_ratio={considered_loads / considered_stores}' if gt_ratio != -1 else ''}), n_writes={n_writes},i={i}")
+            if seen % 100_000_000 == 0:
+                print(f"{id_str} - Reached seen = {seen}\nSR={requested_sample_rate},#T={considered_loads + considered_stores} (#S={considered_stores},#L={considered_loads}{f', gt_ratio={gt_ratio}, curr_ratio={considered_loads / considered_stores}' if gt_ratio != -1 else ''}), n_writes={n_writes},i={i}")
             is_load = bool(mem_accesses_type_arr[i])
             mem_address = int(mem_accesses_arr[i])
             page_base = page_start_from_mem_address(mem_address)
+            if prev_page_base == page_base:
+                repeat_count = 1
+            else:
+                prev_page_base = page_base
+                repeat_count = 0
             pfault = alg.is_page_fault(page_base)
             if pfault or consideration_method():
                 if is_load:
@@ -217,14 +225,11 @@ def alg_producer(shared_mem_accesses_list_name, shared_mem_access_type_list_name
                     curr_non_pfault_dist_sum += md
                 ptchange.append((seen, md))
                 prev_tl = cur_tl
-                if prev_page_base == page_base:
-                    repeat_count = 1
-                else:
-                    prev_page_base = page_base
-                    repeat_count = 0
 
         # Save data to file:
         save_to_file_compressed(np.array(ptchange).transpose(), id_str, ptchange_dir, n_writes)
+        with open(own_data_save_dir + OTHER_DATA_FN, 'w') as f:
+            f.write(f"seen,considered_l,considered_s,pfaults,pfault_dist_average,non_pfault_dist_average\n{seen},{considered_loads},{considered_stores},{n_pfaults},{curr_pfault_distance_sum / n_pfaults},{curr_non_pfault_dist_sum / (considered_loads + considered_stores - n_pfaults)}\n")
         ptchange = []
         n_writes += 1
         # Fill Qs with -1 so that they know it's the last item of the batch
@@ -338,7 +343,7 @@ def in_tra_ter_consumer(shared_comp_ready_cv, num_comp_ready_shared_value, conti
 
 
 def save_to_file_compressed(np_array, id_str, savedir, number_writes):
-    print(id_str, f"Saving, n_writes={number_writes}")
+    # print(id_str, f"Saving, n_writes={number_writes}")
     f = gzip.GzipFile(savedir + str(number_writes) + '.npy.gz', 'w')
     np.save(file=f, arr=np_array)
     f.close()
@@ -346,15 +351,15 @@ def save_to_file_compressed(np_array, id_str, savedir, number_writes):
 
 REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO = 0.01
 AVERAGE_SAMPLE_RATIO = 0.05
-N_ITEMS = 1024 * 1024 * 2
+N_ITEMS = 1024 * 512
 
 
 def main(args):
     K = 2
     MAX_PAGE_CACHE_SIZE = 507569  # pages = `$ ulimit -l`/4  ~= 2GB mem
-    page_cache_size = MAX_PAGE_CACHE_SIZE // 32  # ~ 64 KB mem
-    samples_div = [i / 100 for i in range(0, 101, 20) if i != 0]
-    samples_div = [REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO, AVERAGE_SAMPLE_RATIO] + samples_div
+    page_cache_size = MAX_PAGE_CACHE_SIZE // 16  # ~ 64 KB mem
+    samples_div = [i / 100 for i in range(0, 99, 33) if i != 0]
+    samples_div = [REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO, AVERAGE_SAMPLE_RATIO] + samples_div + [1.0]
     algs = [LRU_K(page_cache_size, K, 0, False), CLOCK(page_cache_size, K), ARC(page_cache_size), CAR(page_cache_size)]
     # We want:
     #   standalone alg w/ diff levels of mem traces --> (page faults + extra) ~=  TESTED_VALUE * full_memory_trace
