@@ -1,9 +1,9 @@
 import copy
-import functools
 import gzip
 import json
 import threading
 import time
+from multiprocessing.managers import SharedMemoryManager
 from pathlib import Path
 
 from algorithms.GenericAlgorithm import *
@@ -12,7 +12,7 @@ from algorithms.CAR import CAR
 from algorithms.LRU_K import LRU_K
 from algorithms.CLOCK import CLOCK
 import argparse
-from multiprocessing import Process, Queue
+from multiprocessing import Process, Queue, Value, Condition, shared_memory, Barrier
 import os
 import shutil
 
@@ -59,45 +59,140 @@ def overall_manhattan_distance(tl1, baseline_tl, punish=False):
     return sum_
 
 
-MAX_BUFFER_SIZE_BYTES = 64 * 1024 * 1024
+def reader_process(file_to_read, shared_mem_accesses_list_name, shared_mem_access_type_list_name, n_items,
+                   total_alg_processes, shared_alg_ready_cv, num_alg_ready_shared_value,
+                   total_comp_processes, shared_comp_ready_cv, num_comp_ready_shared_value,
+                   continue_shared_value):
+    nn(file_to_read, shared_mem_accesses_list_name, shared_mem_access_type_list_name, n_items, total_alg_processes,
+       shared_alg_ready_cv, num_alg_ready_shared_value, total_comp_processes, shared_comp_ready_cv,
+       num_comp_ready_shared_value, continue_shared_value)
+    # At the beginning, so the processes wait for this reader process to be ready
+    assert num_alg_ready_shared_value.value != 0
+    assert continue_shared_value.value
+    id_str = "READER PROCESS -"
+    with open(file_to_read, 'r') as f:
+        shared_mem_accesses_list = shared_memory.SharedMemory(create=False, name=shared_mem_accesses_list_name)
+        shared_mem_access_type_list = shared_memory.SharedMemory(create=False, name=shared_mem_access_type_list_name)
+        mem_accesses_arr = np.ndarray(n_items, dtype=np.uintp, buffer=shared_mem_accesses_list.buf)
+        mem_accesses_type_arr = np.ndarray(n_items, dtype=np.uint8, buffer=shared_mem_access_type_list.buf)
+
+        def fill_array():
+            for i in range(n_items):
+                line = f.readline()
+                if line == '':
+                    return -1
+                is_load = line[0] == 'R'
+                addr = int(line[1:], 16)
+                mem_accesses_arr[i] = addr
+                mem_accesses_type_arr[i] = is_load
+            return n_items
+
+        def stop_condition(read):
+            return read
+
+        # First fill
+        total_read = n_items
+        setup_success = False
+        if fill_array():
+            total_read += n_items
+            setup_success = True
+        while setup_success and not stop_condition(total_read):
+            # Wake Alg processes
+            with shared_alg_ready_cv:
+                num_alg_ready_shared_value.value = 0
+                shared_alg_ready_cv.notify_all()
+                # Wait for them to finish
+                shared_alg_ready_cv.wait_for(lambda: num_alg_ready_shared_value.value == total_alg_processes)
+            print(f"{id_str} ALGs finished")
+
+            # Wake Comparison processes
+            with shared_comp_ready_cv:
+                num_comp_ready_shared_value.value = 0
+                shared_comp_ready_cv.notify_all()
+
+            # In the meantime, get new data
+            if fill_array():
+                total_read += n_items
+            else:
+                break
+
+            print(f"{id_str} READ finished, num_comp_ready_shared_value={num_comp_ready_shared_value.value}")
+            # Wait for comp processes to finish (could already be the case, doesn't matter)
+            with shared_comp_ready_cv:
+                shared_comp_ready_cv.wait_for(lambda: num_comp_ready_shared_value.value == total_comp_processes)
+            print(f"{id_str} COMPs finished")
+        print("Reader process instructed to end, switching continue var")
+        continue_shared_value.value = False
+        # Wait for all processes to have finished and notify them it's over
+        with shared_alg_ready_cv:
+            shared_alg_ready_cv.wait_for(lambda: num_alg_ready_shared_value.value == total_alg_processes)
+            num_alg_ready_shared_value.value = 0
+            shared_alg_ready_cv.notify_all()
+        with shared_comp_ready_cv:
+            shared_comp_ready_cv.wait_for(lambda: num_comp_ready_shared_value.value == total_comp_processes)
+            num_comp_ready_shared_value.value = 0
+            shared_comp_ready_cv.notify_all()
+
+
+MAX_BUFFER_SIZE_BYTES = 1 * 1024 * 1024
 PTCHANGE_DIR_NAME = 'ptchange'
 OTHER_DATA_FN = "stats.csv"
 
 
-def alg_producer(file_path: str, alg, requested_sample_rate: int, change_queues,
+def alg_producer(shared_mem_accesses_list_name, shared_mem_access_type_list_name, n_items,
+                 shared_alg_ready_cv, num_alg_ready_shared_value,
+                 continue_shared_value, alg_barrier,
+                 alg, requested_sample_rate: int, change_queues,
                  own_data_save_dir, gt_ratio=-1):
+    nn(shared_mem_accesses_list_name, shared_mem_access_type_list_name, n_items, shared_alg_ready_cv,
+       num_alg_ready_shared_value,
+       continue_shared_value, alg, requested_sample_rate, change_queues, own_data_save_dir, gt_ratio)
+    assert continue_shared_value.value
     assert 0 < requested_sample_rate <= 1
-    nn(file_path, alg, requested_sample_rate, change_queues, own_data_save_dir, gt_ratio)
     ptchange_dir = own_data_save_dir + PTCHANGE_DIR_NAME
     Path(ptchange_dir).mkdir(parents=False, exist_ok=False)
     ptchange_dir += '/'
-    nparrsize = MAX_BUFFER_SIZE_BYTES // 4  # 4 == number of bytes of np.uintc (=== unsigned int --> 32bit)
-    ptchange, ptchange_at, ptchange_count = np.zeros(nparrsize, dtype=np.uintc), 0, 0
+
     n_pfaults = curr_pfault_distance_sum = curr_non_pfault_dist_sum = 0
     seen = 0  # count the total considered and seen memory instructions
     id_str = f"{os.getpid()}:{threading.current_thread().ident} - "
-    with open(file_path, 'r') as mtf:
-        prev_tl = []
-        considered_loads, considered_stores = 0, 0
 
-        def should_consider():
-            return requested_sample_rate <= ((considered_loads + considered_stores) / seen) <= requested_sample_rate
+    prev_tl, prev_page_base, repeat_count = [], 0, 0
+    considered_loads, considered_stores = 0, 0
 
-        def should_consider_ratio():
-            return should_consider() and ((gt_ratio <= (considered_loads / considered_stores) and not is_load)
-                                          or (considered_loads / considered_stores) <= gt_ratio and is_load)
+    def should_consider():
+        return ((considered_loads + considered_stores) / seen) <= requested_sample_rate
 
-        consideration_method = should_consider if gt_ratio >= 0 else should_consider_ratio
+    def should_consider_ratio():
+        return should_consider() and ((is_load and ((considered_loads / considered_stores) <= gt_ratio))
+                                      or (not is_load and (gt_ratio <= (considered_loads / considered_stores))))
 
-        print(f"{id_str} Starting file reading.")
-        while (line := mtf.readline()) != '':
+    consideration_method = should_consider_ratio if gt_ratio >= 0 else should_consider
+    shared_mem_accesses_list = shared_memory.SharedMemory(create=False, name=shared_mem_accesses_list_name)
+    shared_mem_access_type_list = shared_memory.SharedMemory(create=False, name=shared_mem_access_type_list_name)
+    mem_accesses_arr = np.ndarray(n_items, dtype=np.uintp, buffer=shared_mem_accesses_list.buf)
+    mem_accesses_type_arr = np.ndarray(n_items, dtype=np.uint8, buffer=shared_mem_access_type_list.buf)
+    print(f"{id_str} Waiting for first fill and starting...")
+    n_writes = 0
+    while True:
+        # Wait to be notified you can go ; === value to be 0
+        with shared_alg_ready_cv:
+            shared_alg_ready_cv.wait_for(lambda: num_alg_ready_shared_value.value == 0)
+
+        # Wait for all processes to be able to start to run, o/w/ DDLCK if one finishes before all have left the wait
+        alg_barrier.wait()
+
+        if not continue_shared_value.value:
+            break
+
+        ptchange = []
+        for i in range(n_items):
             seen += 1
-            is_load = False
             if seen % 2_000_000 == 0:
-                print(f"{id_str} - Reached seen = {seen}\nptchange_at={ptchange_at}, ptchange_count={ptchange_count},buff_size={nparrsize}")
-            if line[0] == 'R':
-                is_load = True
-            mem_address = int(line[1:], 16)
+                print(
+                    f"{id_str} - Reached seen = {seen}\nSR={requested_sample_rate},#T={considered_loads + considered_stores} (#S={considered_stores},#L={considered_loads}{f', gt_ratio={gt_ratio}, curr_ratio={considered_loads / considered_stores}' if gt_ratio != -1 else ''}), n_writes={n_writes},i={i}")
+            is_load = bool(mem_accesses_type_arr[i])
+            mem_address = int(mem_accesses_arr[i])
             page_base = page_start_from_mem_address(mem_address)
             pfault = alg.is_page_fault(page_base)
             if pfault or consideration_method():
@@ -105,6 +200,10 @@ def alg_producer(file_path: str, alg, requested_sample_rate: int, change_queues,
                     considered_loads += 1
                 else:
                     considered_stores += 1
+                if repeat_count == 1:
+                    # No need to consume : all algorithms have already correctly handled the page
+                    # Also no need to update running averages, as md will be 0 if prev_tl = cur_tl
+                    continue
                 alg.consume(page_base)
                 cur_tl = alg.get_temperature_list()
                 # Update buffer
@@ -116,103 +215,144 @@ def alg_producer(file_path: str, alg, requested_sample_rate: int, change_queues,
                     curr_pfault_distance_sum += md
                 else:
                     curr_non_pfault_dist_sum += md
-                prev_ptchange_count = ptchange_count
-                ptchange_at, ptchange_count = add_tuple_to_np_arr_and_save_if_necessary(ptchange, nparrsize, id_str,
-                                                                                        ptchange_dir, ptchange_at,
-                                                                                        ptchange_count, (seen, md))
-                if prev_ptchange_count != ptchange_count:
-                    # We've written, also save progress of running averages
-                    with open(own_data_save_dir + OTHER_DATA_FN, 'a') as f:
-                        f.write(
-                            f"seen,considered_l,considered_s,pfaults,pfault_dist_average,non_pfault_dist_average\n{seen},{considered_loads},{considered_stores},{n_pfaults},{curr_pfault_distance_sum / n_pfaults},{curr_non_pfault_dist_sum / (considered_loads + considered_stores - n_pfaults)}\n")
-                    print(id_str, f" Finished saving")
+                ptchange.append((seen, md))
                 prev_tl = cur_tl
-        print(f"{os.getpid()}: Finished file reading")
-        # Send finish signal
+                if prev_page_base == page_base:
+                    repeat_count = 1
+                else:
+                    prev_page_base = page_base
+                    repeat_count = 0
+
+        # Save data to file:
+        save_to_file_compressed(np.array(ptchange).transpose(), id_str, ptchange_dir, n_writes)
+        ptchange = []
+        n_writes += 1
+        # Fill Qs with -1 so that they know it's the last item of the batch
         for q in change_queues:
             q.put((-1, prev_tl))
 
-        print(f"{os.getpid()} Finished saving data, exiting")
+        # Say we're ready!
+        with shared_alg_ready_cv:
+            num_alg_ready_shared_value.value += 1
+            shared_alg_ready_cv.notify_all()
+
+    shared_mem_accesses_list.close()
+    shared_mem_access_type_list.close()
+    print(f"{id_str} Finished file reading")
 
 
-ALG_VARNAME = 'alg'
-BASELINE_VARNAME = 'baseline'
 DESC_STR = 'desc_string'
+FIRST = "first"
+BASELINE = "baseline"
+BOTH = FIRST + BASELINE
 
 
-def in_tra_ter_consumer(producer_q_1, producer_q_baseline, savedir):
-    nn(producer_q_1, producer_q_baseline, savedir)
-    alg_stop, baseline_stop = False, False
+def in_tra_ter_consumer(shared_comp_ready_cv, num_comp_ready_shared_value, continue_shared_value, comp_barrier,
+                        producer_q_1, producer_q_baseline, savedir):
+    nn(shared_comp_ready_cv, num_comp_ready_shared_value, continue_shared_value, producer_q_1, producer_q_baseline,
+       savedir)
+    assert continue_shared_value.value
     id_str = f"{os.getpid()}:{threading.get_native_id()}"
-    buff_size = MAX_BUFFER_SIZE_BYTES // 4  # 4 == number of bytes of np.uintc (=== unsigned int --> 32bit)
-    diffs, diffs_at, diffs_count = np.zeros(buff_size, dtype=np.uintc), 0, 0
-    tuple_save = functools.partial(add_tuple_to_np_arr_and_save_if_necessary, diffs, buff_size, id_str, savedir)
-    (at, curr_alg_tl), (at_baseline, curr_baseline_tl) = producer_q_1.get(), producer_q_baseline.get()
-    to_poll = []
+    (at, curr_alg_tl), (at_baseline, curr_baseline_tl) = (-1, []), (-1, [])
+    to_poll = BOTH
+    n_writes = 0
+    print(f"{id_str} Waiting for first alg round and starting...")
     while True:
-        if at == -1:
-            alg_stop = True
-        if at_baseline == -1:
-            baseline_stop = True
-        if alg_stop or baseline_stop:
+        # Wait to be notified you can go ; === value to be 0
+        with shared_comp_ready_cv:
+            shared_comp_ready_cv.wait_for(lambda: num_comp_ready_shared_value.value == 0)
+
+        # Wait for all processes to be able to start to run, o/w/ DDLCK if one finishes before all have left the wait
+        comp_barrier.wait()
+
+        if not continue_shared_value.value:
             break
-        if at == at_baseline:
-            to_poll = [producer_q_1, producer_q_baseline]
-        else:
-            if at < at_baseline:
-                to_poll = [producer_q_1]
-            else:
-                to_poll = [producer_q_baseline]
-        diffs_at, diffs_count = tuple_save(diffs_at, diffs_count,
-                                           (at, overall_manhattan_distance(curr_alg_tl, curr_baseline_tl, True)))
 
-        # Honestly have to reformat this, my eyes burn just looking at it
-        for q in to_poll:
-            if q == producer_q_1:
-                (at, curr_alg_tl) = producer_q_1.get()
-            elif q == producer_q_baseline:
-                (at_baseline, curr_baseline_tl) = producer_q_baseline.get()
-    if not (baseline_stop and alg_stop):
-        # Append the rest of the non-empty Q ; (else: stopped at the same time, no non-empty Qs)
-        if baseline_stop:
-            assert producer_q_baseline.empty() and not alg_stop
-            q_to_empty = producer_q_1
-        else:
-            q_to_empty = producer_q_baseline
+        alg_stop, baseline_stop = False, False
+        diffs = []
         while True:
-            somewhere, tl = q_to_empty.get()
-            if somewhere == -1:
+            assert FIRST in to_poll or BASELINE in to_poll
+            if FIRST in to_poll:
+                (at, curr_alg_tl) = producer_q_1.get()
+                where = at
+            if BASELINE in to_poll:
+                (at_baseline, curr_baseline_tl) = producer_q_baseline.get()
+                where = at_baseline
+            if at == -1:
+                alg_stop = True
+            if at_baseline == -1:
+                baseline_stop = True
+            if alg_stop or baseline_stop:
                 break
-            approximation_distance = overall_manhattan_distance(curr_alg_tl, tl, True) if alg_stop else \
-                overall_manhattan_distance(tl, curr_baseline_tl, True)
-            tuple_save(diffs_at, diffs_count, (somewhere, approximation_distance))
+            if at == at_baseline:
+                to_poll = BOTH
+            else:
+                if at < at_baseline:
+                    to_poll = FIRST
+                else:
+                    to_poll = BASELINE
+            diffs.append((where, overall_manhattan_distance(curr_alg_tl, curr_baseline_tl, True)))
+
+        # Append the rest of the non-empty Q ; (else: stopped at the same time, no non-empty Qs)
+        if not (baseline_stop and alg_stop):
+            if baseline_stop:
+                to_poll = FIRST
+            else:
+                to_poll = BASELINE
+            while True:
+                if FIRST in to_poll:
+                    assert BASELINE not in to_poll
+                    (at, curr_alg_tl) = producer_q_1.get()
+                    where = at
+                    other_at = at_baseline
+                    other_to_poll = BASELINE
+                else:
+                    assert BASELINE in to_poll
+                    (at_baseline, curr_baseline_tl) = producer_q_baseline.get()
+                    where = at_baseline
+                    other_at = at
+                    other_to_poll = FIRST
+                if where == -1:
+                    break
+                else:
+                    approximation_distance = overall_manhattan_distance(curr_alg_tl, curr_baseline_tl, True)
+                    diffs.append((where, approximation_distance))
+                    if where > other_at:
+                        to_poll = other_to_poll
+                        break
+                    elif where == other_at:
+                        to_poll = BOTH
+                        break
+        to_poll = BOTH if (at == at_baseline) and alg_stop and baseline_stop else (
+            BASELINE if at_baseline < at else FIRST)
+        # Save data to file:
+        save_to_file_compressed(np.array(diffs).transpose(), id_str, savedir, n_writes)
+        diffs = []
+        n_writes += 1
+
+        # Say we're ready!
+        with shared_comp_ready_cv:
+            num_comp_ready_shared_value.value += 1
+            shared_comp_ready_cv.notify_all()
+    print(f"{id_str} Finished comparing")
 
 
-def add_tuple_to_np_arr_and_save_if_necessary(np_array, max_size, id_str, savedir, np_array_at, number_writes,
-                                              save_tuple):
-    np_array[np_array_at] = save_tuple[0]
-    np_array[np_array_at + 1] = save_tuple[1]
-    np_array_at += 2
-    if np_array_at >= max_size:
-        # Save Buffer
-        print(id_str, f"Buffer full, saving at n={number_writes}")
-        f = gzip.GzipFile(savedir + str(number_writes) + '.npy.gz', 'w')
-        np.save(file=f, arr=np_array)
-        f.close()
-        np_array_at = 0
-        number_writes += 1
-    return np_array_at, number_writes
+def save_to_file_compressed(np_array, id_str, savedir, number_writes):
+    print(id_str, f"Saving, n_writes={number_writes}")
+    f = gzip.GzipFile(savedir + str(number_writes) + '.npy.gz', 'w')
+    np.save(file=f, arr=np_array)
+    f.close()
 
 
 REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO = 0.01
 AVERAGE_SAMPLE_RATIO = 0.05
-Q_MAX_SIZE = 1024
+N_ITEMS = 1024 * 1024 * 2
 
 
 def main(args):
     K = 2
     MAX_PAGE_CACHE_SIZE = 507569  # pages = `$ ulimit -l`/4  ~= 2GB mem
-    page_cache_size = MAX_PAGE_CACHE_SIZE // 16  # ~ 128 KB mem
+    page_cache_size = MAX_PAGE_CACHE_SIZE // 32  # ~ 64 KB mem
     samples_div = [i / 100 for i in range(0, 101, 20) if i != 0]
     samples_div = [REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO, AVERAGE_SAMPLE_RATIO] + samples_div
     algs = [LRU_K(page_cache_size, K, 0, False), CLOCK(page_cache_size, K), ARC(page_cache_size), CAR(page_cache_size)]
@@ -264,7 +404,7 @@ def main(args):
     assert 2 * (len(ratio_comparisons) + len(non_ratio_comparisons)) == sum(alg_to_queues.values())
 
     for k, v in alg_to_queues.items():
-        alg_to_queues[k] = (0, [Queue(maxsize=Q_MAX_SIZE) for _ in range(v)])
+        alg_to_queues[k] = (0, [Queue(maxsize=-1) for _ in range(v)])
 
     base_dir = args.data_save_dir.resolve().as_posix() + '/'
 
@@ -275,70 +415,102 @@ def main(args):
     standalone_dir.mkdir(exist_ok=False, parents=False)
     standalone_dir_as_posix = standalone_dir.resolve().as_posix() + '/'
 
-    for alg in algs:
-        for div in samples_div:
-            alg_with_div = f"{alg.name()}_{str(div)}"
-            alg_dir = Path(standalone_dir_as_posix + alg_with_div)
-            alg_dir.mkdir(exist_ok=False, parents=False)
-            q_list = alg_to_queues[alg_with_div][1]
-            data_gathering_processes.append(Process(target=alg_producer,
-                                                    args=(args.mem_trace_path.resolve().as_posix(),
-                                                          copy.deepcopy(alg),
-                                                          div,
-                                                          q_list,
-                                                          alg_dir.resolve().as_posix() + '/')))
-        if args.ratio_realistic:
-            ratio_div_alg_name = f"{alg.name()}_{str(REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO)}"
-            ratio_alg = ratio_div_alg_name + "_R"
-            alg_dir = Path(standalone_dir_as_posix + ratio_alg)
-            alg_dir.mkdir(exist_ok=False, parents=False)
-            data_gathering_processes.append(Process(target=alg_producer,
-                                                    args=(args.mem_trace_path.resolve().as_posix(),
-                                                          copy.deepcopy(alg),
-                                                          REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO,
-                                                          alg_to_queues[ratio_alg][1],
-                                                          alg_dir.resolve().as_posix() + '/',
-                                                          args.db[args.mem_trace_path.resolve().as_posix()]['ratio'])))
+    num_alg_processes = len(algs) * (len(samples_div) + (1 if args.ratio_realistic else 0))
+    num_comp_processes = len(ratio_comparisons) + len(non_ratio_comparisons)
 
-    print("Creating and starting comparison processes")
-    # Spawn all comparison processes
-    comparison_processes = []
+    with SharedMemoryManager() as smm:
+        base_arrays = [None, None]
+        base_arrays[0] = np.zeros(N_ITEMS, dtype=np.uintp)
+        base_arrays[1] = np.zeros(N_ITEMS, dtype=np.uint8)
+        shared_mem = [None, None]
+        copied_arrays = [None, None]
+        cvs = [None, None]
+        for i in range(len(base_arrays)):
+            shared_mem[i] = smm.SharedMemory(size=base_arrays[i].nbytes)
+            copied_arrays[i] = np.ndarray(base_arrays[i].shape, dtype=base_arrays[i].dtype, buffer=shared_mem[i].buf)
+            copied_arrays[i][:] = base_arrays[i][:]
+            cvs[i] = Condition()
+        shared_values = [Value('B', lock=False), Value('B', lock=False)]
+        shared_values[0].value = num_alg_processes
+        shared_values[1].value = num_comp_processes
+        shared_barriers = [Barrier(num_alg_processes), Barrier(num_comp_processes)]
+        continue_shared_value = Value('B', lock=False)
+        continue_shared_value.value = 1
 
-    comp_dir = Path(base_dir + "comp")
-    comp_dir.mkdir(exist_ok=False, parents=False)
-    comp_dir_as_posix = comp_dir.resolve().as_posix() + '/'
+        for alg in algs:
+            for div in samples_div:
+                alg_with_div = f"{alg.name()}_{str(div)}"
+                alg_dir = Path(standalone_dir_as_posix + alg_with_div)
+                alg_dir.mkdir(exist_ok=False, parents=False)
+                q_list = alg_to_queues[alg_with_div][1]
+                p = Process(target=alg_producer, args=(shared_mem[0].name, shared_mem[1].name, N_ITEMS, cvs[0],
+                                                       shared_values[0], continue_shared_value, shared_barriers[0],
+                                                       copy.deepcopy(alg), div, q_list,
+                                                       alg_dir.resolve().as_posix() + '/'))
+                data_gathering_processes.append(p)
+            if args.ratio_realistic:
+                ratio_div_alg_name = f"{alg.name()}_{str(REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO)}"
+                ratio_alg = ratio_div_alg_name + "_R"
+                alg_dir = Path(standalone_dir_as_posix + ratio_alg)
+                alg_dir.mkdir(exist_ok=False, parents=False)
+                data_gathering_processes.append(Process(target=alg_producer,
+                                                        args=(shared_mem[0].name, shared_mem[1].name, N_ITEMS, cvs[0],
+                                                              shared_values[0], continue_shared_value,
+                                                              shared_barriers[0],
+                                                              copy.deepcopy(alg),
+                                                              REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO,
+                                                              alg_to_queues[ratio_alg][1],
+                                                              alg_dir.resolve().as_posix() + '/',
+                                                              args.db[args.mem_trace_path.resolve().as_posix()][
+                                                                  'ratio'])))
 
-    for comparison in non_ratio_comparisons + ratio_comparisons:
-        comp_alg_name, baseline_alg_name = tuple(comparison.split(" vs "))
-        (comp_qhead, comp_qlist), (baseline_qhead, baseline_qlist) = alg_to_queues[comp_alg_name], alg_to_queues[
-            baseline_alg_name]
-        assert comp_qhead < len(comp_qlist) and baseline_qhead < len(baseline_qlist)
-        comp_q, baseline_q = comp_qlist[comp_qhead], baseline_qlist[baseline_qhead]
-        alg_to_queues[comp_alg_name] = (comp_qhead + 1, comp_qlist)
-        alg_to_queues[baseline_alg_name] = (baseline_qhead + 1, baseline_qlist)
-        save_dir = Path(comp_dir_as_posix + comp_alg_name + '_vs_' + baseline_alg_name)
-        save_dir.mkdir(exist_ok=False, parents=False)
-        process = Process(target=in_tra_ter_consumer,
-                          args=(
-                              comp_q,
-                              baseline_q,
-                              save_dir.resolve().as_posix() + '/'
-                          ))
-        comparison_processes.append(process)
-        process.start()
+        print(f"Creating and starting {num_comp_processes} comparison processes")
+        # Spawn all comparison processes
+        comparison_processes = []
 
-    # Start all algorithms
-    print("Starting algorithm processes")
-    for p in data_gathering_processes:
-        p.start()
+        comp_dir = Path(base_dir + "comp")
+        comp_dir.mkdir(exist_ok=False, parents=False)
+        comp_dir_as_posix = comp_dir.resolve().as_posix() + '/'
 
-    # Join processes and gather wb data
-    print("Joining algorithm processes")
-    for p in data_gathering_processes:
-        p.join()
+        for comparison in non_ratio_comparisons + ratio_comparisons:
+            comp_alg_name, baseline_alg_name = tuple(comparison.split(" vs "))
+            (comp_qhead, comp_qlist), (baseline_qhead, baseline_qlist) = alg_to_queues[comp_alg_name], alg_to_queues[
+                baseline_alg_name]
+            assert comp_qhead < len(comp_qlist) and baseline_qhead < len(baseline_qlist)
+            comp_q, baseline_q = comp_qlist[comp_qhead], baseline_qlist[baseline_qhead]
+            alg_to_queues[comp_alg_name] = (comp_qhead + 1, comp_qlist)
+            alg_to_queues[baseline_alg_name] = (baseline_qhead + 1, baseline_qlist)
+            save_dir = Path(comp_dir_as_posix + comp_alg_name + '_vs_' + baseline_alg_name)
+            save_dir.mkdir(exist_ok=False, parents=False)
+            process = Process(target=in_tra_ter_consumer,
+                              args=(
+                                  cvs[1], shared_values[1], continue_shared_value, shared_barriers[1],
+                                  comp_q,
+                                  baseline_q,
+                                  save_dir.resolve().as_posix() + '/'
+                              ))
+            comparison_processes.append(process)
+            process.start()
 
-    for p in comparison_processes:
-        p.join()
+        # Start all algorithms
+        print("Starting algorithm processes")
+        for p in data_gathering_processes:
+            p.start()
+
+        r_process = Process(target=reader_process, args=(args.mem_trace_path.resolve().as_posix(),
+                                                         shared_mem[0].name, shared_mem[1].name, N_ITEMS,
+                                                         num_alg_processes, cvs[0], shared_values[0],
+                                                         num_comp_processes, cvs[1], shared_values[1],
+                                                         continue_shared_value))
+        r_process.start()
+        r_process.join()
+        # Join processes and gather wb data
+        print("Joining algorithm processes")
+        for p in data_gathering_processes:
+            p.join()
+
+        for p in comparison_processes:
+            p.join()
 
     print("Got all data!")
 
