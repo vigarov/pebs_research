@@ -4,6 +4,8 @@
 
 #include "GenericAlgorithm.h"
 
+typedef std::deque<page_t> arc_cache_t;
+
 struct ARC_page_data{
     size_t index=0;
 };
@@ -14,20 +16,26 @@ public:
     void consume(page_t page_start) override;
     temp_function get_temparature_function() override { return [this](page_t page_base){return page_to_data[page_base].index;}; };
     inline bool is_page_fault(page_t page) override {return page_to_data.contains(page);};
-    std::string name() override {return "LRU_"+std::to_string(K);};
+    std::string name() override {return "ARC";};
 private:
     std::string cache_to_string(size_t num_elements) override{
-        if(num_elements>page_cache.size()) num_elements = page_cache.size();
-        std::string ret("[");
-        ret += page_iterable_to_str(page_cache.begin(),page_cache.begin()+static_cast<long>(num_elements));
-        ret += ']';
+        std::string ret;
+        long num_left_elements = static_cast<long>(num_elements);
+        for (int i = T1; i <= T2; ++i && num_elements>0) {
+            if(i == T2 && num_left_elements>caches[i].size()) num_left_elements = static_cast<long>(caches[i].size());
+            ret += std::to_string(i)+": ";
+            std::string cache_answ("[");
+            cache_answ += page_iterable_to_str(caches[i].begin(), caches[i].begin() + num_left_elements);
+            cache_answ += ']';
+            ret += cache_answ;
+            num_left_elements -= static_cast<long>(caches[i].size());
+        }
         return ret;
     };
-    cache_t page_cache; // idx 0 = LRU; idx size-1 = MRU
+    arc_cache_t caches[4]{}; // idx 0 = LRU; idx size-1 = MRU
     std::unordered_map<page_t,ARC_page_data> page_to_data;
-    uint64_t count_stamp = 0;
-    page_t find_victim_and_erase();
-
+    double p = 0.;
+    void replace(bool inB2);
 };
 
 

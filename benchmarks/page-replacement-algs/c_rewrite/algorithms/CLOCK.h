@@ -22,7 +22,7 @@ public:
         auto delta = std::accumulate(num_count_i.begin(),num_count_i.begin()+page_data.counter,static_cast<size_t>(0)); // == (page_data.counter ? num_count_i[page_data.counter]: 0);
         return relative_idx + delta;}; };
     inline bool is_page_fault(page_t page) override {return page_to_data.contains(page);};
-    std::string name() override {return "CLOCK";};
+    std::string name() override {return "GLOCK";};
 private:
     std::string cache_to_string(size_t num_elements) override{
         if(num_elements>page_cache.size()) num_elements = page_cache.size();
@@ -31,7 +31,7 @@ private:
         ret += ']';
         return ret;
     };
-    gclock_cache_t page_cache; // idx 0 = should-be LRU; idx size-1 = should-be MRU
+    gclock_cache_t page_cache{}; // idx 0 = should-be LRU; idx size-1 = should-be MRU
     std::unordered_map<page_t,CLOCK_page_data> page_to_data;
     void find_victim();
     size_t head = 0;

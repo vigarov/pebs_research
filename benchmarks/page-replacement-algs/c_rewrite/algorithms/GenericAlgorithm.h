@@ -6,6 +6,7 @@
 #include <sstream>
 #include <iterator>
 #include <functional>
+#include <deque>
 
 typedef uint64_t ptr_t;
 typedef ptr_t page_t;
@@ -14,6 +15,8 @@ typedef size_t temp_t;
 typedef std::function<temp_t (ptr_t)> temp_function;
 
 static constexpr uint16_t PAGE_SIZE = 4096;
+
+enum{T1=0,T2,B1,B2,NUM_CACHES};
 
 ptr_t page_start_from_mem_address(ptr_t x) {
     return x & ~(PAGE_SIZE - 1);

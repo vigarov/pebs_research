@@ -3,7 +3,6 @@
 
 #include "GenericAlgorithm.h"
 #include <list>
-#include <deque>
 
 
 typedef std::list<page_t> lru_cache_t;
@@ -31,7 +30,7 @@ private:
         ret += ']';
         return ret;
     };
-    lru_cache_t page_cache; // idx 0 = MRU; idx size-1 = LRU
+    lru_cache_t page_cache{}; // idx 0 = MRU; idx size-1 = LRU
     const uint8_t K;
     std::unordered_map<page_t,LRU_page_data> page_to_data;
     uint64_t count_stamp = 0;
