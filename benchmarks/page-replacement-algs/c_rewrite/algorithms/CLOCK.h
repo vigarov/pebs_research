@@ -14,20 +14,20 @@ struct CLOCK_page_data{
 
 class CLOCK : public GenericAlgorithm{
 public:
-    CLOCK(uint16_t page_cache_size,uint8_t i) : GenericAlgorithm(page_cache_size),i(i),num_count_i(i,0){};
+    CLOCK(uint16_t page_cache_size,uint8_t i) : GenericAlgorithm(page_cache_size),i(i),num_count_i(i+1,0){};
     void consume(page_t page_start) override;
     temp_function get_temparature_function() override { return [this](page_t page_base){
         auto& page_data = page_to_data[page_base];
-        auto relative_idx = (head+page_data.index)%page_cache.size();
+        auto relative_idx = (page_data.index-head)%page_cache.size();
         auto delta = std::accumulate(num_count_i.begin(),num_count_i.begin()+page_data.counter,static_cast<size_t>(0)); // == (page_data.counter ? num_count_i[page_data.counter]: 0);
         return relative_idx + delta;}; };
     inline bool is_page_fault(page_t page) override {return page_to_data.contains(page);};
-    std::string name() override {return "GLOCK";};
+    std::string name() override {return "GLOCK";}; // 0 = cold
 private:
     std::string cache_to_string(size_t num_elements) override{
         if(num_elements>page_cache.size()) num_elements = page_cache.size();
         std::string ret("[");
-        ret += page_iterable_to_str(page_cache.begin(),page_cache.begin()+static_cast<long>(num_elements));
+        ret += page_iterable_to_str(page_cache.begin(),num_elements, page_cache.end());
         ret += ']';
         return ret;
     };
@@ -35,6 +35,7 @@ private:
     std::unordered_map<page_t,CLOCK_page_data> page_to_data;
     void find_victim();
     size_t head = 0;
+    const uint8_t i;
     std::vector<size_t> num_count_i;
 };
 

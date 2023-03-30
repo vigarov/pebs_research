@@ -2,14 +2,15 @@
 
 void LRU_K::consume(page_t page_start){
     count_stamp+=1;
+    auto page_fault = is_page_fault(page_start);
     auto& page_data = page_to_data[page_start];
     auto& histories = page_data.history;
     //For K!=2, if(histories.size() != K) {/*set K empty elements*/}
     histories.pop_back();
     histories.push_front(count_stamp);
-    if(is_page_fault(page_start)){
-        if(page_cache.size()==page_cache_size){ //Full must replace
-            auto victim_page_it = find_victim();
+    if(page_fault){
+        if(page_cache.size()==page_cache_size){ //Full, must replace
+            auto victim_page_it = std::prev(page_cache.end());
             page_to_data.erase(*victim_page_it);
             page_cache.erase(victim_page_it);
         }
@@ -21,8 +22,7 @@ void LRU_K::consume(page_t page_start){
         //Keep the page cache sorted; page_data[K-1] must be compared to all subsequent page_data[K-1]
         auto it = page_data.at_iterator;
         if(it != page_cache.begin()) {
-            auto page_before = std::prev(it);
-            page_cache.erase(it);
+            auto page_before = std::prev(page_cache.erase(it));
             while (page_before != page_cache.begin() && page_to_data[*page_before].history[K - 1] < histories[K - 1]) {
                 page_to_data[*page_before].index++;
                 page_before = std::prev(page_before);
@@ -38,8 +38,4 @@ void LRU_K::consume(page_t page_start){
             page_data.at_iterator = page_cache.insert(page_before, page_start);
         }
     }
-}
-
-lru_cache_t::iterator LRU_K::find_victim() {
-    return std::prev(page_cache.end()); //We're maintaining the sort at every consume()
 }
