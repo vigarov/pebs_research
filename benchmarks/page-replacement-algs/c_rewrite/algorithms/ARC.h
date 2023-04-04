@@ -6,28 +6,36 @@
 #include <list>
 #include <iostream>
 
-typedef std::list<page_t> arc_cache_t;
-
-struct ARC_page_data{
-    size_t index=0;
-    cache_list_idx in_list = NUM_CACHES;
-    arc_cache_t::iterator at_iterator;
-};
-
 
 class ARC : public GenericAlgorithm{
 public:
     ARC(uint16_t page_cache_size) : GenericAlgorithm(page_cache_size){};
-    void consume(page_t page_start) override;
-    temp_function get_temparature_function() override { return [this](page_t page_base){
-        if(is_page_fault(page_base)) std::cerr<<"Error";
-        const auto& page_data = page_to_data[page_base];
-        auto temp = page_data.index;
-        if(page_data.in_list == T2) temp += caches[T1].size()-1;
-        return temp;
-    }; }; // 0 = coldest
-    inline bool is_page_fault(page_t page) override {return !page_to_data.contains(page) || page_to_data[page].in_list == B1 || page_to_data[page].in_list == B2;};
+    bool consume(page_t page_start) override;
+    temp_t get_temperature(page_t page,std::optional<std::shared_ptr<nd_t>> necessary_data) const  override {
+        if (necessary_data == std::nullopt) {
+            const auto &page_data = page_to_data.at(page);
+            auto temp = page_data.index;
+            if (page_data.in_list == T2) temp += caches[T1].size();
+            return temp;
+        }
+        else{
+            auto& nd = std::get<ARC_temp_necessary_data>(*  necessary_data.value());
+            const auto& page_data = nd.prev_page_to_data.at(page);
+            auto temp = page_data.index;
+            if (page_data.in_list == T2) temp += nd.prev_T1_cache_size;
+            return temp;
+        }
+    }// 0 = coldest
+    std::unique_ptr<nd_t> get_necessary_data() override{
+        ARC_temp_necessary_data arctnd{page_to_data,caches[T1].size()};
+        nd_t act_nd = std::move(arctnd);
+        return std::make_unique<nd_t>(std::move(act_nd));
+    }
+    inline bool is_page_fault(page_t page) const  override {return !page_to_data.contains(page) || page_to_data.at(page).in_list == B1 || page_to_data.at(page).in_list == B2;};
     std::string name() override {return "ARC";};
+    virtual std::unique_ptr<page_cache_copy_t> get_page_cache_copy() override;
+    temp_t compare_to_previous(std::shared_ptr<nd_t> prev_nd) override;
+    const dual_container_range<arc_cache_t>* get_cache_iterable() const {return &dcr;}
 private:
     std::string cache_to_string(size_t num_elements) override{
         std::string ret;
@@ -50,8 +58,10 @@ private:
     void replace(bool inB2);
     void remove_from_cache_and_update_indices(cache_list_idx cache, arc_cache_t::iterator page_it);
 
+    dual_container_range<car_cache_t> dcr{caches[T1],caches[T2]};
     void lru_to_mru(cache_list_idx from, cache_list_idx to);
 };
+
 
 
 #endif //C_REWRITE_ARC_H
