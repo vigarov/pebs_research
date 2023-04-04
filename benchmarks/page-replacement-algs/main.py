@@ -1,6 +1,7 @@
 import copy
 import gzip
 import json
+import sys
 import threading
 import time
 from multiprocessing.managers import SharedMemoryManager
@@ -76,7 +77,7 @@ def reader_process(file_to_read, shared_mem_accesses_list_name, shared_mem_acces
             for i in range(n_items):
                 line = f.readline()
                 if line == '':
-                    return -1
+                    return 0
                 is_load = line[0] == 'R'
                 addr = int(line[1:], 16)
                 mem_accesses_arr[i] = addr
@@ -167,6 +168,7 @@ def comparison_and_standalone(shared_mem_accesses_list_name, shared_mem_access_t
 
     print(f"{id_str} Waiting for first fill and starting...")
     n_writes = 0
+    seen = 0  # count the total considered and seen memory instructions
     while True:
         # Wait to be notified you can go ; === value to be 0
         with shared_process_ready_cv:
@@ -179,7 +181,6 @@ def comparison_and_standalone(shared_mem_accesses_list_name, shared_mem_access_t
             break
 
         comp_diffs = []
-        seen = 0  # count the total considered and seen memory instructions
         for i in range(n_items):
             is_load = bool(mem_accesses_type_arr[i])
             mem_address = int(mem_accesses_arr[i])
@@ -235,6 +236,8 @@ def comparison_and_standalone(shared_mem_accesses_list_name, shared_mem_access_t
         # Save comparisons
         save_to_file_compressed(np.array(comp_diffs).transpose(), id_str, comp_write_dir, n_writes)
         n_writes += 1
+
+
 
         # Say we're ready!
         with shared_process_ready_cv:
@@ -331,7 +334,7 @@ def main(args):
 
         standalone_algs = set()
         all_processes = []
-
+        sys.setswitchinterval(1.0)
         for comparison in ratio_comparisons + non_ratio_comparisons:
             tpl = tuple(comparison.split(" vs "))
             out_alg_args = []

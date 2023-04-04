@@ -39,8 +39,10 @@ class CAR(Algorithm):
                 # Adapt
                 if in_li[B1]:
                     self.p = min(self.p + max(1., len(self.lists[B2]) // len(self.lists[B1])), self.page_cache_size)
+                    self.lists[B1].remove(associated_page)
                 else:
                     self.p = max(self.p - max(1., len(self.lists[B1]) // len(self.lists[B2])), 0)
+                    self.lists[B2].remove(associated_page)
                 # Move page to tail of T2
                 self.lists[T2].append(associated_page)
                 self.reference_bits[associated_page] = 0

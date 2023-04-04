@@ -87,6 +87,9 @@ if __name__ == "__main__":
     test_accesses = ['W0x7fffffffd9a8', 'W0x7fffffffd980', 'W0x7ffff7ffde0e', 'W0x7ffff7ffdb78',
                      'R0x7ffff7ffcf80', 'W0x7ffff7ffdcc0', 'R0x7ffff7ffde0e', 'R0x7ffff7ffdb50', 'R0x7ffff7ffce98']
 
+    ta_1 = ["W0x7fffffffd9a8", "W0x7fffffffd980", "W0x7ffff7ffde0e", "W0x7ffff7ffdb78",
+            "R0x7ffff7ffcf80", "W0x7ffff7ffdcc0", "R0x7ffff7ffce98"]
+
     ta2 = ['R0x7ffff7ffc418', 'R0x7fffffffe064', 'R0x7ffff7ffc480', 'R0x7ffff7ffc488', 'R0x7ffff7ffc4f0',
            'R0x7ffff7ffc4f8', 'R0x7ffff7ffc560', 'W0x7fffffffd9a8', 'W0x7fffffffd980', 'W0x7ffff7ffde0e',
            'W0x7ffff7ffdb78', 'R0x7ffff7ffcf80', 'W0x7ffff7ffdcc0', 'R0x7ffff7ffde0e', 'R0x7ffff7ffdb50',
@@ -103,7 +106,7 @@ if __name__ == "__main__":
 
     for alg in my_algs:
         pfaults = 0
-        for ma in ta2:
+        for ma in ta2 :
             mem_address = int(ma[1:], 16)
             page_start = page_start_from_mem_address(mem_address)
             if alg.is_page_fault(page_start):
