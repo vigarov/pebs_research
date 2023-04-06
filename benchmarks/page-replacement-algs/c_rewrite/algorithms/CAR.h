@@ -39,8 +39,7 @@ public:
     }// 0 = coldest
     std::unique_ptr<nd_t> get_necessary_data() override{
         CAR_temp_necessary_data cartnd{page_to_data,num_unreferenced,caches[T1].size()};
-        nd_t act_nd = std::move(cartnd);
-        return std::make_unique<nd_t>(std::move(act_nd));
+        return std::make_unique<nd_t>(std::move(cartnd));
     }
     inline bool is_page_fault(page_t page) const override {return !page_to_data.contains(page) || page_to_data.at(page).in_list == B1 || page_to_data.at(page).in_list == B2;};
     std::string name() override {return "CAR";};

@@ -16,11 +16,17 @@
 #include <mutex>
 #include <condition_variable>
 #include <zlib.h>
+#include "tests/cprng.h"
+#include <random>
+#include "tests/test.h"
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
-static void onCompl(){}
+static constexpr uint8_t K = 2;
+static constexpr size_t MAX_PAGE_CACHE_SIZE = 507569; // pages = `$ ulimit -l`/4  ~= 2GB mem
+static constexpr size_t page_cache_size = MAX_PAGE_CACHE_SIZE / 16; // ~ 64 KB mem
+
 
 
 std::string dtos(double f, uint8_t nd) {
@@ -28,62 +34,6 @@ std::string dtos(double f, uint8_t nd) {
     const auto tens = static_cast<double>(std::pow(10,nd));
     ostr << std::round(f*tens)/tens;
     return ostr.str();
-}
-
-int test() {
-    int K = 2;
-    int page_cache_size = 3; // ~128 KB mem
-    std::vector<GenericAlgorithm*> const my_algs = {
-            new LRU_K(page_cache_size, K),
-            new CLOCK(page_cache_size, K),
-            new ARC(page_cache_size),
-            new CAR(page_cache_size)
-    };
-
-    std::vector<std::string> const test_accesses = {"W0x7fffffffd9a8", "W0x7fffffffd980", "W0x7ffff7ffde0e", "W0x7ffff7ffdb78",
-                                                    "R0x7ffff7ffcf80", "W0x7ffff7ffdcc0", "R0x7ffff7ffde0e", "R0x7ffff7ffdb50", "R0x7ffff7ffce98"};
-
-    std::vector<std::string> const ta1 = {
-            "W0x7fffffffd9a8", "W0x7fffffffd980", "W0x7ffff7ffde0e", "W0x7ffff7ffdb78",
-            "R0x7ffff7ffcf80", "W0x7ffff7ffdcc0", "R0x7ffff7ffce98"
-    };
-
-    std::vector<std::string> const ta2 = {
-            "R0x7ffff7ffc418", "R0x7fffffffe064", "R0x7ffff7ffc480", "R0x7ffff7ffc488", "R0x7ffff7ffc4f0",
-            "R0x7ffff7ffc4f8", "R0x7ffff7ffc560", "W0x7fffffffd9a8", "W0x7fffffffd980", "W0x7ffff7ffde0e",
-            "W0x7ffff7ffdb78", "R0x7ffff7ffcf80", "W0x7ffff7ffdcc0", "R0x7ffff7ffde0e", "R0x7ffff7ffdb50",
-            "R0x7ffff7ffce98", "R0x7ffff7ffc568", "R0x7ffff7ffc5d0", "R0x7ffff7ffc5d8",
-            "R0x7ffff7ffc640", "R0x7ffff7ffc648", "R0x7ffff7ffc6b0", "R0x7ffff7ffc6b8", "R0x7fffffffe064",
-            "R0x7ffff7ffc720", "R0x7ffff7ffc728", "R0x7fffffffe064", "R0x7ffff7ffc790", "R0x7ffff7ffc798",
-            "R0x7ffff7ffc800", "R0x7ffff7ffc808", "R0x7ffff7ffc870", "R0x7ffff7ffc878", "R0x7fffffffe064",
-            "R0x7ffff7ffc8e0", "R0x7ffff7ffc8e8", "R0x7ffff7ffc950", "R0x7ffff7ffc958", "R0x7ffff7ffc9c0",
-            "R0x7ffff7ffc9c8", "R0x7ffff7ffca30", "R0x7ffff7ffca38", "R0x7fffffffe064", "R0x7fffffffd7b0",
-            "R0x7fffffffdab8", "R0x7fffffffe07c", "W0x7fffffffd7b0", "R0x7fffffffe07d", "R0x7fffffffe07e",
-            "R0x7fffffffe07f", "R0x7fffffffe080", "R0x7fffffffe081", "R0x7fffffffe082", "R0x7fffffffe083",
-            "R0x7fffffffe084", "R0x7fffffffe085", "R0x7fffffffe086", "R0x7fffffffe087", "W0x7fffffffd7b8",
-            "R0x7fffffffe07c", "R0x7ffff7ff1279", "R0x7fffffffe07d", "R0x7ffff7ffca98"
-    };
-
-    for (auto alg : my_algs) {
-        int pfaults = 0;
-        for (const auto& ta : ta2) {
-            uint64_t const mem_address = std::stoull(ta.substr(1), nullptr, 16);
-            uint64_t const page_start = page_start_from_mem_address(mem_address);
-            if (alg->is_page_fault(page_start)) {
-                pfaults++;
-            }
-            alg->consume(page_start);
-        }
-        auto tl = alg->get_page_cache_copy();
-        std::sort(tl->begin(), tl->end(), [&](page_t a, page_t b){return alg->get_temperature(a,std::nullopt) < alg->get_temperature(b,std::nullopt);});
-        std::cout << "Temperature List: [";
-        for (auto e : *tl) {
-            std::cout << " " << std::hex << e;
-        }
-        std::cout << " ] Pfaults: " << pfaults << std::endl;
-    }
-
-    return 0;
 }
 
 struct Args {
@@ -217,9 +167,6 @@ std::unordered_map<std::string, json> populate_or_get_db(const Args& args) {
 static constexpr double REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO = 0.01;
 static constexpr double AVERAGE_SAMPLE_RATIO = 0.05;
 static constexpr size_t BUFFER_SIZE = 1024*1024;
-constexpr uint8_t K = 2;
-constexpr size_t MAX_PAGE_CACHE_SIZE = 507569; // pages = `$ ulimit -l`/4  ~= 2GB mem
-constexpr size_t page_cache_size = MAX_PAGE_CACHE_SIZE / 16; // ~ 64 KB mem
 
 static constexpr const int PRECISION = 2;
 namespace page_cache_algs {
@@ -421,7 +368,7 @@ static void comparison_and_standalone(std::barrier<>& it_barrier, std::string co
         auto change_diffs = std::make_shared<temp_log_t>();
         change_diffs->reserve(BUFFER_SIZE/2);
 
-        for(size_t i =0;i<BUFFER_SIZE;i++){
+        for(size_t i = 0;i<BUFFER_SIZE;i++){
             auto page_base = page_start_from_mem_address(mem_address_buf[i]);
             auto is_load = mem_reqtype_buf[i];
 
@@ -437,10 +384,11 @@ static void comparison_and_standalone(std::barrier<>& it_barrier, std::string co
                         ss << ", gt_ratio=" << alg.twa.ratio
                                   << ", curr_ratio=" << alg.considered_loads / alg.considered_stores;
                     }
-                    ss << "), n_writes=" << n_writes << ",i=" << i << '\n';
-                    std::cout<<ss.str();
+                    ss << "), n_writes=" << n_writes << ",i=" << i;
+                    std::cout<<ss.str()<<std::endl;
                 }
                 auto pfault = alg.alg->is_page_fault(page_base);
+                auto should_break = (alg.twa.alg_info.second == 1) && (alg.twa.standalone_save_dir != NO_STANDALONE) && (alg.twa.alg_info.first == page_cache_algs::LRU_t);
                 if(pfault || alg.considerationMethod(alg,seen,is_load)){
                     if(is_load){
                         alg.considered_loads++;
@@ -512,22 +460,44 @@ static bool fill_array(std::ifstream& f){
     return i==BUFFER_SIZE;
 }
 
+#define BIGSKIP 7228143
+#ifdef BIGSKIP
+static const size_t LINE_SIZE_BYTES = strlen("W0x7fffffffd9a8\n")*sizeof(char);
+#define RELAX_NUM_LINES 1000
+static const unsigned long long SKIP_OFF = (BIGSKIP-RELAX_NUM_LINES)*LINE_SIZE_BYTES;
+#endif
+
 static void reader_thread(std::string path_to_mem_trace){
     const auto total_nm_processes = num_ready;
     const std::string id_str = "READER PROCESS -";
     std::ifstream f(path_to_mem_trace);
     auto stop_condition = [](size_t read){return read>100'000'000;};
     if (f.is_open()) {
+#ifdef BIGSKIP
+        //After analysis, a new unique page for this benchmark arrives every ~2000 mem accesses before access number
+        // 7228143 and every 50 accesses afterwards. To skip this big uninteresting area of 7 million memory accesses,
+        // we simply seek a little ahead in the file
+        auto left_to_skip = SKIP_OFF;
+        f.seekg(0,std::ios_base::end);
+        std::cout<<"Total size=" <<f.tellg()<<std::endl;
+        f.seekg(0,std::ios_base::beg);
+        std::cout<<f.tellg()<<std::endl;
+        while(left_to_skip!=0) {
+            auto skip_ammount = static_cast<long>(std::min(static_cast<unsigned long long>(std::numeric_limits<long>::max()),left_to_skip));
+            f.seekg(skip_ammount, std::ios_base::beg);
+            left_to_skip-=skip_ammount;
+        }
+        std::cout<<f.tellg()<<std::endl;
+#endif
         size_t n = 0,total_read = 0;
         if(!fill_array(f)){
             std::cerr<<id_str<<"Failed initial read, exiting..."<<std::endl;
             goto out;
         }
         total_read+=BUFFER_SIZE;
-        std::cout << id_str << "First read success" <<std::endl;
+        std::cout << id_str << " First read success" <<std::endl;
 
         while(!stop_condition(total_read)){
-            std::cout << id_str << " n=" << n << std::endl;
             {
                 std::unique_lock<std::mutex> lk(it_mutex);
                 it_cv.wait(lk,[total_nm_processes](){return num_ready==total_nm_processes;});
@@ -543,6 +513,7 @@ static void reader_thread(std::string path_to_mem_trace){
                 break; //error or EOF
             }
             n+=1;
+            std::cout << id_str << " n=" << n << std::endl;
         }
 out:
         f.close();
@@ -651,14 +622,14 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
         const auto ratio = db.at(args.mem_trace_path).at("ratio").get<double>();
         const ThreadWorkAlgs t1{comparison.first, do_standalone_1, ratio};
         auto standalone_2 = do_standalone_1 == NO_STANDALONE ? do_standalone(standalone_dir_as_posix,done_standalone, comparison.second.first,indexof(samples_div.begin(),samples_div.end(), comparison.second.second),comparison.second.second) : NO_STANDALONE;
-        const ThreadWorkAlgs t2{comparison.second, standalone_2, ratio};
+        const ThreadWorkAlgs t2{comparison.second, standalone_2, -1};
         auto comp_save_dir_path = fs::path(comp_dir_as_posix+get_alg_div_name(comparison.first)+"_R"+"_vs_"+get_alg_div_name(comparison.second));
         fs::create_directories(comp_save_dir_path);
         auto comp_save_dir_path_str = fs::absolute(comp_save_dir_path).lexically_normal().string()+'/';
         all_threads.emplace_back(comparison_and_standalone,std::ref(it_barrier),comp_save_dir_path_str,thread_arg_t({t1,t2}));
     }
 
-        std::jthread reader(reader_thread,args.mem_trace_path);
+    std::jthread reader(reader_thread,args.mem_trace_path);
 
     reader.join();
 
@@ -693,18 +664,15 @@ std::string do_standalone(const std::string& standalone_div_root,std::vector<uin
     }
 }
 
-//#define TESTING
+#define TESTING 1
 
 int main(int argc, char* argv[]) {
-#ifdef TESTING
-    test();
-    auto change_diffs = std::make_shared<temp_log_t>();
-    change_diffs->emplace_back(1,49878);
-    change_diffs->emplace_back(2,48);
-    save_to_file_compressed(change_diffs,"/home/vigarov/testing/",0);
-#endif
     const Args args(argc, argv);
     auto db = populate_or_get_db(args);
+#if (BUILD_TYPE==0 && TESTING == 1)
+    test_latest(args.mem_trace_path);
+#else
     start(args,db);
+#endif
     return 0;
 }

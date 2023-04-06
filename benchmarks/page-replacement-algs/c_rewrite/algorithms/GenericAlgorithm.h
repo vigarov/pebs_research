@@ -22,7 +22,7 @@ static constexpr uint16_t PAGE_SIZE = 4096;
 
 enum cache_list_idx{T1=0,T2,B1,B2,NUM_CACHES};
 
-inline static ptr_t page_start_from_mem_address(ptr_t x) {
+inline static page_t page_start_from_mem_address(ptr_t x) {
     return x & ~(PAGE_SIZE - 1);
 }
 
@@ -166,6 +166,8 @@ private:
 
 typedef std::variant<const lru_cache_t*,const gclock_cache_t*,const dual_container_range<std::list<page_t>>*> iterable_t;
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 class GenericAlgorithm{
 public:
     GenericAlgorithm(size_t page_cache_size) : page_cache_size(page_cache_size) {};
@@ -185,7 +187,7 @@ protected:
         std::ostringstream oss;
         if(start != max) { //== non-empty
             while(num_elements-- && start!=max){
-                oss << std::to_string(*start);
+                oss << std::hex << *start << ',';
                 start = std::next(start);
             }
         }

@@ -27,8 +27,7 @@ public:
     }
     std::unique_ptr<nd_t> get_necessary_data() override{
         CLOCK_temp_necessary_data ctnd = {page_to_data,num_count_i};
-        nd_t act_nd = std::move(ctnd);
-        return std::make_unique<nd_t>(std::move(act_nd));
+        return std::make_unique<nd_t>(std::move(ctnd));
     }
     inline bool is_page_fault(page_t page) const override {return !page_to_data.contains(page);};
     std::string name() override {return "GLOCK";};

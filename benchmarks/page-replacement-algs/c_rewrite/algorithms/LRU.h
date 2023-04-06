@@ -18,8 +18,7 @@ public:
     }; // 0 = cold
     std::unique_ptr<nd_t> get_necessary_data() override{
         LRU_temp_necessary_data lrutnd{page_to_data};
-        nd_t act_nd = std::move(lrutnd);
-        return std::make_unique<nd_t>(std::move(act_nd));
+        return std::make_unique<nd_t>(std::move(lrutnd));
     }
     inline bool is_page_fault(page_t page) const override {return !page_to_data.contains(page);};
     std::string name() override {return "LRU_"+std::to_string(K);};
