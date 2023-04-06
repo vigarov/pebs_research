@@ -321,7 +321,7 @@ static temp_t overall_distance(const GenericAlgorithm& compared, page_cache_algs
 }
 
 
-void save_to_file_compressed(std::shared_ptr<temp_log_t> array, const std::string& savedir, size_t number_writes) {
+void save_to_file_compressed(const std::shared_ptr<temp_log_t>& array, const std::string& savedir, size_t number_writes) {
     const std::string filename = savedir + std::to_string(number_writes) + ".gz";
     gzFile f = gzopen(filename.c_str(), "wb");
     if (f == nullptr) {
@@ -388,7 +388,7 @@ static void comparison_and_standalone(std::barrier<>& it_barrier, std::string co
                     std::cout<<ss.str()<<std::endl;
                 }
                 auto pfault = alg.alg->is_page_fault(page_base);
-                auto should_break = (alg.twa.alg_info.second == 1) && (alg.twa.standalone_save_dir != NO_STANDALONE) && (alg.twa.alg_info.first == page_cache_algs::LRU_t);
+                //auto should_break = (alg.twa.alg_info.second == 1) && (alg.twa.standalone_save_dir != NO_STANDALONE) && (alg.twa.alg_info.first == page_cache_algs::LRU_t);
                 if(pfault || alg.considerationMethod(alg,seen,is_load)){
                     if(is_load){
                         alg.considered_loads++;
@@ -644,7 +644,7 @@ template<typename It>
 size_t indexof(It start, It end, double value) { return std::distance(start, std::find(start, end, value)); }
 
 std::string do_standalone(const std::string& standalone_div_root,std::vector<uint8_t> &done_standalone, page_cache_algs::type alg_type, size_t div_idx,double div_value ,size_t div_size){
-    size_t idx = 0;
+    size_t idx;
     std::string extra;
     if(div_size != 0 ){
         idx = alg_type + (page_cache_algs::NUM_ALGS * div_size);

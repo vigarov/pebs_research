@@ -31,7 +31,7 @@ public:
     }
     inline bool is_page_fault(page_t page) const override {return !page_to_data.contains(page);};
     std::string name() override {return "GLOCK";};
-    virtual std::unique_ptr<page_cache_copy_t> get_page_cache_copy() override;
+    std::unique_ptr<page_cache_copy_t> get_page_cache_copy() override;
     temp_t compare_to_previous(std::shared_ptr<nd_t> prev_nd) override;
     const gclock_cache_t * get_cache_iterable() const {return &page_cache;}
 private:

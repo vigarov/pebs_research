@@ -9,7 +9,7 @@
 
 class CAR : public GenericAlgorithm{
 public:
-    CAR(uint16_t page_cache_size) : GenericAlgorithm(page_cache_size){};
+    explicit CAR(uint16_t page_cache_size) : GenericAlgorithm(page_cache_size){};
     bool consume(page_t page_start) override;
     temp_t get_temperature(page_t page,std::optional<std::shared_ptr<nd_t>> necessary_data) const  override {
         if (necessary_data == std::nullopt) {
@@ -43,7 +43,7 @@ public:
     }
     inline bool is_page_fault(page_t page) const override {return !page_to_data.contains(page) || page_to_data.at(page).in_list == B1 || page_to_data.at(page).in_list == B2;};
     std::string name() override {return "CAR";};
-    virtual std::unique_ptr<page_cache_copy_t> get_page_cache_copy() override;
+    std::unique_ptr<page_cache_copy_t> get_page_cache_copy() override;
     temp_t compare_to_previous(std::shared_ptr<nd_t> prev_nd) override;
     const dual_container_range<car_cache_t>* get_cache_iterable() const {return &dcr;}
 private:

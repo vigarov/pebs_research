@@ -170,11 +170,11 @@ typedef std::variant<const lru_cache_t*,const gclock_cache_t*,const dual_contain
 
 class GenericAlgorithm{
 public:
-    GenericAlgorithm(size_t page_cache_size) : page_cache_size(page_cache_size) {};
+    explicit GenericAlgorithm(size_t page_cache_size) : page_cache_size(page_cache_size) {};
     virtual bool consume(ptr_t page_start) = 0;
-    virtual temp_t get_temperature(page_t page,std::optional<std::shared_ptr<nd_t>> necessary_data) const = 0;
+    [[nodiscard]] virtual temp_t get_temperature(page_t page,std::optional<std::shared_ptr<nd_t>> necessary_data) const = 0;
     virtual std::unique_ptr<nd_t> get_necessary_data() = 0;
-    virtual inline bool is_page_fault(page_t page) const  = 0;
+    [[nodiscard]] virtual inline bool is_page_fault(page_t page) const  = 0;
     virtual std::string name() = 0;
     virtual std::string toString() {return name() + " : cache = " +cache_to_string(10);};
     virtual std::unique_ptr<page_cache_copy_t> get_page_cache_copy() = 0;
