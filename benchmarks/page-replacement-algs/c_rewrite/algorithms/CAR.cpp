@@ -59,12 +59,11 @@ bool CAR::consume(page_t page_start) {
 }
 
 void CAR::update_relative_indices(const CAR_page_data& data) {
-    auto it = std::next(data.at_iterator);
-    while(it!= caches[data.in_list].end()) {
-        auto &maybe_modify_data = page_to_data[*it];
-        if (maybe_modify_data.referenced == data.referenced)maybe_modify_data.relative_index--;
-        it = std::next(it);
-    }
+    auto start = std::next(data.at_iterator);
+    std::for_each(start, caches[data.in_list].end(), [&](const auto &page) {
+        auto &maybe_modify_data = page_to_data[page];
+        if (maybe_modify_data.referenced == data.referenced) maybe_modify_data.relative_index--;
+    });
 }
 
 void CAR::replace() {

@@ -70,10 +70,7 @@ bool ARC::consume(page_t page_start) {
 void ARC::remove_from_cache_and_update_indices(cache_list_idx cache, arc_cache_t::iterator page_it) {
     auto& relevant_cache = caches.at(cache);
     auto next = relevant_cache.erase(page_it);
-    while(next!=relevant_cache.end()){
-        page_to_data[*next].index--;
-        next = std::next(next);
-    }
+    std::for_each(next, relevant_cache.end(),[&](const auto& page){page_to_data[page].index--;});
 }
 
 void ARC::replace(bool inB2) {
