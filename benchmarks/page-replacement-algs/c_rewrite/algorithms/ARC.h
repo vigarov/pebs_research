@@ -38,8 +38,8 @@ public:
 private:
     std::string cache_to_string(size_t num_elements) override{
         std::string ret;
-        long num_left_elements = static_cast<long>(num_elements);
-        for (int i = T1; i <= T2; ++i && num_elements>0) {
+        long long num_left_elements = static_cast<long>(num_elements);
+        for (int i = T1; i <= T2 && num_left_elements>0; ++i) {
             auto& relevant_cache = caches.at(i);
             if(i == T2 && num_left_elements>relevant_cache.size()) num_left_elements = static_cast<long>(relevant_cache.size());
             ret += std::to_string(i)+": ";
