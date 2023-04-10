@@ -9,8 +9,11 @@
 #include "../algorithms/ARC.h"
 #include "../algorithms/CAR.h"
 #include "cprng.h"
-
-
+#include <cstdio>
+#include <sys/stat.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <thread>
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -158,6 +161,7 @@ static void test_file_maps(const std::string& path_to_mem_trace){
         std::cout<< "bm:"<<bm.size() << " "<<bm.bucket_count()<<'\n';
         std::cout<< "cm:"<<cm.size() << " "<<cm.bucket_count()<<'\n';
     }
+    f.close();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -208,6 +212,7 @@ static void test_fuzz(){
 struct BOOST_TEST_LRU_nd{
     boost::unordered_flat_map<page_t,LRU_page_data> prev_page_to_data;
 };
+
 namespace test {
     class BOOST_TEST_LRU {
     public:
@@ -335,9 +340,9 @@ static void test_realistic(const std::string& path_to_mem_trace){
             }
             auto end = std::chrono::system_clock::now();
             std::chrono::duration<double> elapsed_seconds = end - start;
-            std::time_t end_time = std::chrono::system_clock::to_time_t(end);
+            
 
-            std::cout << "STD finished computation at " << std::ctime(&end_time)
+            std::cout << "STD finished computation" << " "
                       << "elapsed time: " << elapsed_seconds.count() << "s"
                       << std::endl;
             f.seekg(0, std::ios_base::beg);
@@ -350,9 +355,7 @@ static void test_realistic(const std::string& path_to_mem_trace){
             }
             end = std::chrono::system_clock::now();
             elapsed_seconds = end - start;
-            end_time = std::chrono::system_clock::to_time_t(end);
-
-            std::cout << "BOOST finished computation at " << std::ctime(&end_time)
+            std::cout << "BOOST finished computation" << " "
                       << "elapsed time: " << elapsed_seconds.count() << "s"
                       << std::endl;
             std::cout << normal_lru.toString() << std::endl;
@@ -371,9 +374,9 @@ static void test_realistic(const std::string& path_to_mem_trace){
             }
             auto end = std::chrono::system_clock::now();
             std::chrono::duration<double> elapsed_seconds = end - start;
-            std::time_t end_time = std::chrono::system_clock::to_time_t(end);
+            
 
-            std::cout << "BOOST finished computation at " << std::ctime(&end_time)
+            std::cout << "BOOST finished computation" << " "
                       << "elapsed time: " << elapsed_seconds.count() << "s"
                       << std::endl;
             f.seekg(0, std::ios_base::beg);
@@ -387,33 +390,315 @@ static void test_realistic(const std::string& path_to_mem_trace){
             }
             end = std::chrono::system_clock::now();
             elapsed_seconds = end - start;
-            end_time = std::chrono::system_clock::to_time_t(end);
-
-            std::cout << "STD finished computation at " << std::ctime(&end_time)
+            std::cout << "STD finished computation" << " "
                       << "elapsed time: " << elapsed_seconds.count() << "s"
                       << std::endl;
             std::cout << normal_lru.toString() << std::endl;
             std::cout << test_lru.toString() << std::endl;
         }
     }
+    f.close();
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#define LINE_SIZE 15 //W0x7fffffffd988
+
+static void test_file_read_speed(const std::string &path_to_mem_trace) {
+
+    const size_t page_cache_size = 16*1024;
+
+    LRU_K c1(page_cache_size,2);
+//
+    bool is_load;
+    uint64_t address;
+    auto end = std::chrono::system_clock::now();
+    auto start = std::chrono::system_clock::now();
+
+    start = std::chrono::system_clock::now();
+
+    int fd = open(path_to_mem_trace.c_str(), O_RDONLY);
+    if (fd == -1)
+        std::cout<<"Couldn't syscall open the file"<<std::endl;
+
+    // obtain file size
+    struct stat sb;
+    if (fstat(fd, &sb) == -1)
+        std::cout<<"Couldn't fstat the file"<<std::endl;
+
+    auto length = sb.st_size;
+
+    const char* addr = static_cast<const char*>(mmap(nullptr, length, PROT_READ, MAP_PRIVATE, fd, 0u));
+    if (addr == MAP_FAILED)
+        std::cout<<"Couldn't mmap the file"<<std::endl;
+
+    end = std::chrono::system_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end - start;
+    std::cout << "mmap finished open " << "elapsed time: " << elapsed_seconds.count() << "s" << std::endl;
+
+    uint64_t at = 0;
+    start = std::chrono::system_clock::now();
+    while(at<length){
+        is_load = addr[at++] == 'R';
+        char* str_end = nullptr;
+        address = std::strtoull(addr+at,&str_end,16);
+        at+= (str_end+1-(addr+at));
+    }
+    end = std::chrono::system_clock::now();
+    elapsed_seconds = end - start;
+
+    std::cout << "MMAP setup finished computation" << " "
+              << "elapsed time: " << elapsed_seconds.count() << "s" << "; data:" << is_load << address
+              << std::endl;
+
+    at = 0;
+    start = std::chrono::system_clock::now();
+    while(at<length){
+        is_load = addr[at++] == 'R';
+        char* str_end = nullptr;
+        address = std::strtoull(addr+at,&str_end,16);
+        at+= (str_end+1-(addr+at));
+        c1.consume(page_start_from_mem_address(address));
+    }
+    end = std::chrono::system_clock::now();
+    elapsed_seconds = end - start;
+
+    std::cout << "MMAP read finished computation" << " "
+              << "elapsed time: " << elapsed_seconds.count() << "s" << "; data:" << is_load << address
+              << std::endl;
+
+    auto ret = munmap((void *) addr, length);
+    if(ret)
+        std::cout<<"Couldn't munmap the file"<<std::endl;
+    close(fd);
+
+    //////////////////////
+
+    LRU_K c2(page_cache_size,2);
+
+    start = std::chrono::system_clock::now();
+
+    std::ifstream f(path_to_mem_trace);
+    if (f.is_open()) {
+        end = std::chrono::system_clock::now();
+        std::chrono::duration<double> elapsed_seconds = end - start;
+        std::cout << "C++ getline open finished" << " "
+                  << "elapsed time: " << elapsed_seconds.count() << std::endl;
+
+        std::string line;
+        //Setup first ; put some data in cache
+        start = std::chrono::system_clock::now();
+        while(std::getline(f,line)){
+            is_load = line[0]=='R';
+            address = std::stoull(line.substr(1), nullptr, 16);
+        }
+        end = std::chrono::system_clock::now();
+        elapsed_seconds = end - start;
+
+        std::cout << "C++ getline setup finished computation" << " "
+                  << "elapsed time: " << elapsed_seconds.count() << "s" << "; data:" << is_load << address
+                  << std::endl;
+
+        f.clear();
+        f.seekg(0,std::ios_base::beg);
+
+        start = std::chrono::system_clock::now();
+        while(std::getline(f,line)){
+            is_load = line[0]=='R';
+            address = std::stoull(line.substr(1), nullptr, 16);
+            c2.consume(page_start_from_mem_address(address));
+        }
+        end = std::chrono::system_clock::now();
+        elapsed_seconds = end - start;
+
+        std::cout << "C++ getline read finished computation" << " "
+                  << "elapsed time: " << elapsed_seconds.count() << "s" << "; data:" << is_load << address
+                  << std::endl;
+    }
+    f.close();
+
+    //////////////////////
+
+
+  /*  start = std::chrono::system_clock::now();
+    std::FILE* fpointer = std::fopen(path_to_mem_trace.c_str(), "rb");
+    if(fpointer != nullptr){
+
+        end = std::chrono::system_clock::now();
+        std::chrono::duration<double> elapsed_seconds = end - start;
+        std::cout << "C-style open finished" << " "
+                  << "elapsed time: " << elapsed_seconds.count() << std::endl;
+
+        char buf[LINE_SIZE] = {0};
+        start = std::chrono::system_clock::now();
+        while(!std::feof(fpointer)){
+            (void)std::fread(buf, sizeof(char), LINE_SIZE, fpointer);
+            is_load = buf[0]=='R';
+            address = std::strtoull(buf+1, nullptr,16);
+            std::fseek(fpointer, 1, SEEK_CUR);
+        }
+        end = std::chrono::system_clock::now();
+        elapsed_seconds = end - start;
+
+        std::cout << "C-style setup finished computation" << " "
+                  << "elapsed time: " << elapsed_seconds.count() << "s" << "; data:" << is_load << address
+                  << std::endl;
+
+        fseek(fpointer, 0, SEEK_SET);
+        start = std::chrono::system_clock::now();
+        while(!std::feof(fpointer)){
+            (void)std::fread(buf, sizeof(char), LINE_SIZE, fpointer);
+            is_load = buf[0]=='R';
+            address = std::strtoull(buf+1, nullptr,16);
+            std::fseek(fpointer, 1, SEEK_CUR);
+        }
+        end = std::chrono::system_clock::now();
+        elapsed_seconds = end - start;
+
+        std::cout << "C-style read finished computation" << " "
+                  << "elapsed time: " << elapsed_seconds.count() << "s" << "; data:" << is_load << address
+                  << std::endl;
+        std::fclose(fpointer);
+    }
+    else{
+        std::cout<<"Couldn't open the file"<<std::endl;
+    }
+*/
 
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+void arc_t(__off_t length, const char *addr) {
+    const size_t page_cache_size = 16 * 1024;
+    ARC a1(page_cache_size);
+    uint64_t address;
+    auto end = std::chrono::system_clock::now();
+    auto start = std::chrono::system_clock::now();
+    uint64_t at = 7'000'000;
+    start = std::chrono::system_clock::now();
+    while(at<length){
+        char* str_end = nullptr;
+        address = strtoull(addr+at,&str_end,16);
+        at+= (str_end+1-(addr+at));
+        a1.consume(page_start_from_mem_address(address));
+    }
+    end = std::chrono::system_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end - start;
+
+    std::cout << "ARC finished" << " "
+              << "elapsed time: " << elapsed_seconds.count() << "s"
+              << std::endl;
+}
+void car_t(__off_t length, const char *addr) {
+    const size_t page_cache_size = 16 * 1024;
+    CAR a1(page_cache_size);
+    uint64_t address;
+    auto end = std::chrono::system_clock::now();
+    auto start = std::chrono::system_clock::now();
+    uint64_t at = 7'000'000;
+    start = std::chrono::system_clock::now();
+    while(at<length){
+        char* str_end = nullptr;
+        address = strtoull(addr+at,&str_end,16);
+        at+= (str_end+1-(addr+at));
+        a1.consume(page_start_from_mem_address(address));
+    }
+    end = std::chrono::system_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end - start;
+
+    std::cout << "CAR finished" << " "
+              << "elapsed time: " << elapsed_seconds.count() << "s"
+              << std::endl;
+}
+void lru_t(__off_t length, const char *addr) {
+    const size_t page_cache_size = 16 * 1024;
+    LRU_K a1(page_cache_size,2);
+    uint64_t address;
+    auto end = std::chrono::system_clock::now();
+    auto start = std::chrono::system_clock::now();
+    uint64_t at = 7'000'000;
+    start = std::chrono::system_clock::now();
+    while(at<length){
+        char* str_end = nullptr;
+        address = strtoull(addr+at,&str_end,16);
+        at+= (str_end+1-(addr+at));
+        a1.consume(page_start_from_mem_address(address));
+    }
+    end = std::chrono::system_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end - start;
+
+    std::cout << "LRU finished" << " "
+              << "elapsed time: " << elapsed_seconds.count() << "s"
+              << std::endl;
+}
+void c_t(__off_t length, const char *addr) {
+    const size_t page_cache_size = 16 * 1024;
+    CLOCK a1(page_cache_size,2);
+    uint64_t address;
+    auto end = std::chrono::system_clock::now();
+    auto start = std::chrono::system_clock::now();
+    uint64_t at = 7'000'000;
+    start = std::chrono::system_clock::now();
+    while(at<length){
+        char* str_end = nullptr;
+        address = strtoull(addr+at,&str_end,16);
+        at+= (str_end+1-(addr+at));
+        a1.consume(page_start_from_mem_address(address));
+    }
+    end = std::chrono::system_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end - start;
+
+    std::cout << "CLOCK finished" << " "
+              << "elapsed time: " << elapsed_seconds.count() << "s" << "; data:"
+              << std::endl;
+}
+
+void test_full_all_mt(const std::string &path_to_mem_trace) {
+
+    auto end = std::chrono::system_clock::now();
+    auto start = std::chrono::system_clock::now();
+
+    int fd = open(path_to_mem_trace.c_str(), O_RDONLY);
+    if (fd == -1)
+        std::cout<<"Couldn't syscall open the file"<<std::endl;
+
+    // obtain file size
+    struct stat sb;
+    if (fstat(fd, &sb) == -1)
+        std::cout<<"Couldn't fstat the file"<<std::endl;
+
+    size_t length = 9'000'000 * (LINE_SIZE+1);
+
+    const char* addr = static_cast<const char*>(mmap(nullptr, length, PROT_READ, MAP_PRIVATE, fd, 0u));
+    if (addr == MAP_FAILED)
+        std::cout<<"Couldn't mmap the file"<<std::endl;
+
+    end = std::chrono::system_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end - start;
+    std::cout << "mmap finished open " << "elapsed time: " << elapsed_seconds.count() << "s" << std::endl;
+
+
+    std::array a = {std::jthread(arc_t,length,addr),std::jthread(car_t,length,addr),std::jthread(c_t,length,addr),std::jthread(lru_t,length,addr)};
+
+    for(auto& t : a) t.join();
+
+    auto ret = munmap((void *) addr, length);
+    if(ret)
+        std::cout<<"Couldn't munmap the file"<<std::endl;
+    close(fd);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 void test_all(const std::string& path_to_mem_trace){
-    const size_t page_cache_size = 16*1024;
 
     test_ma_all();
     test_file_maps(path_to_mem_trace);
     test_fuzz();
 }
 
-static void test_runthrough_all_algs(const std::string &path_to_mem_trace) {
-
-
-}
 
 void test_latest(const std::string& path_to_mem_trace){
-    test_realistic(path_to_mem_trace);
+    test_full_all_mt(path_to_mem_trace);
 }

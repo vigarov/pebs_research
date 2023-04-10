@@ -76,7 +76,7 @@ uint16_t crc16(uint64_t tbh){
     crc = crc16_byte(crc, tbh&0xff000000);
     crc = crc16_byte(crc, tbh&0xff0000);
     crc = crc16_byte(crc, tbh&0xff00);
-    return crc16_byte(crc, tbh&0xff);;
+    return crc16_byte(crc, tbh&0xff);
 }
 
 

@@ -169,7 +169,7 @@ private:
 class GenericAlgorithm{
 public:
     explicit GenericAlgorithm(size_t page_cache_size) : page_cache_size(page_cache_size) {};
-    virtual bool consume(ptr_t page_start) = 0;
+    virtual bool consume(page_t page_start) = 0;
     [[nodiscard]] virtual temp_t get_temperature(page_t page,std::optional<std::shared_ptr<nd_t>> necessary_data) const = 0;
     virtual std::unique_ptr<nd_t> get_necessary_data() = 0;
     [[nodiscard]] virtual inline bool is_page_fault(page_t page) const  = 0;
