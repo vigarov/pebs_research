@@ -5,7 +5,7 @@ bool ARC::consume(page_t page_start) {
     auto in_cache = (page_data.in_list == T1 || page_data.in_list == T2);
     const bool not_changed = page_data.in_list==T2 && (std::next(page_data.at_iterator) == caches[T2].end());
     if (in_cache){
-        remove_from_cache_and_update_indices(page_data.in_list,page_data.at_iterator);
+        caches[page_data.in_list].erase(page_data.at_iterator); // TODO remove_from_cache_and_update_indices(page_data.in_list,page_data.at_iterator);
         page_data.index = caches[T2].size();
         page_data.at_iterator = caches[T2].insert(caches[T2].end(),page_start);
         page_data.in_list = T2;
@@ -43,7 +43,7 @@ bool ARC::consume(page_t page_start) {
             else{
                 auto it_to_remove = caches[T1].begin();
                 auto page = *it_to_remove;
-                remove_from_cache_and_update_indices(T1,it_to_remove);
+                caches[T1].erase(it_to_remove); // TODO remove_from_cache_and_update_indices(T1,it_to_remove);
                 page_to_data.erase(page);
             }
         }
@@ -87,7 +87,7 @@ void ARC::lru_to_mru(cache_list_idx from, cache_list_idx to) {
     auto page_it = caches.at(from).begin();
     const auto page = *page_it;
     auto & page_data = page_to_data[page];
-    remove_from_cache_and_update_indices(from, page_it);
+    caches[from].erase(page_it); // TODO remove_from_cache_and_update_indices(from, page_it);
     page_data.in_list = to;
     page_data.at_iterator = caches.at(to).insert(caches.at(to).end(), page);
 }
