@@ -25,8 +25,8 @@ namespace fs = std::filesystem;
 
 static constexpr uint8_t K = 2;
 static constexpr size_t MAX_PAGE_CACHE_SIZE = 507569; // pages = `$ ulimit -l`/4  ~= 2GB mem
-static constexpr size_t page_cache_size = MAX_PAGE_CACHE_SIZE / 16; // ~ 64 KB mem
-
+static constexpr size_t page_cache_size = 32*1024; // ~ 64 KB mem
+static constexpr size_t LINE_SIZE_BYTES = 16; // "W0x7fffffffd9a8\n"*1 (===sizeof(char))
 
 
 std::string dtos(double f, uint8_t nd) {
@@ -114,8 +114,6 @@ struct Args {
     }
 };
 
-static constexpr double FOUR_DIGITS_PRECISION = 1000.0;
-
 std::unordered_map<std::string, json> populate_or_get_db(const Args& args) {
     bool in_file;
     std::ios_base::openmode mode;
@@ -157,7 +155,7 @@ std::unordered_map<std::string, json> populate_or_get_db(const Args& args) {
                 strs += 1;
             }
         }
-        db[full_path] = {{"loads", lds}, {"stores", strs}, {"ratio", std::round(lds * FOUR_DIGITS_PRECISION / strs) / FOUR_DIGITS_PRECISION}, {"count", lds + strs}};
+        db[full_path] = {{"loads", lds}, {"stores", strs}, {"ratio", dtos(static_cast<double>(lds)/static_cast<double>(strs),4)}, {"count", lds + strs}};
         dbf.seekp(0);
         dbf << db.dump();
     }
@@ -168,7 +166,7 @@ static constexpr double REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO = 0.01;
 static constexpr double AVERAGE_SAMPLE_RATIO = 0.05;
 static constexpr size_t BUFFER_SIZE = 1024*1024;
 
-static constexpr const int PRECISION = 2;
+static constexpr const int ALG_DIV_PRECISION = 2;
 namespace page_cache_algs {
     enum type {LRU_t, GCLOCK_t, ARC_t, CAR_t, NUM_ALGS};
     static constexpr std::array all = {LRU_t, GCLOCK_t, ARC_t, CAR_t};
@@ -193,7 +191,7 @@ typedef std::pair<page_cache_algs::type,double> compared_t;
 typedef std::pair<compared_t,compared_t> comparison_t;
 
 
-static inline std::string get_alg_div_name(page_cache_algs::type t,double div) {return page_cache_algs::alg_to_name(t)+'_'+ dtos(div,PRECISION);}
+static inline std::string get_alg_div_name(page_cache_algs::type t,double div) {return page_cache_algs::alg_to_name(t)+'_'+ dtos(div, ALG_DIV_PRECISION);}
 static inline std::string get_alg_div_name(compared_t ct){return get_alg_div_name(ct.first,ct.second);}
 
 static const std::string NO_STANDALONE = "!";
@@ -202,6 +200,7 @@ struct ThreadWorkAlgs{
     const compared_t alg_info;
     std::string standalone_save_dir = NO_STANDALONE;
     const double ratio;
+    uint8_t is_userspace = 0;
 };
 
 typedef std::pair<ThreadWorkAlgs,ThreadWorkAlgs> thread_arg_t;
@@ -220,8 +219,8 @@ volatile uint8_t num_ready;
 volatile uint8_t continue_running = true;
 
 //Shared Buffers
-std::array<uint64_t,BUFFER_SIZE> mem_address_buf{};
-std::array<uint8_t,BUFFER_SIZE> mem_reqtype_buf{};
+std::vector<page_t> mem_address_buf{};
+std::vector<uint8_t> mem_reqtype_buf{};
 
 struct AlgInThread;
 
@@ -462,7 +461,6 @@ static bool fill_array(std::ifstream& f){
 
 #define BIGSKIP 7228143
 #ifdef BIGSKIP
-static const size_t LINE_SIZE_BYTES = strlen("W0x7fffffffd9a8\n")*sizeof(char);
 #define RELAX_NUM_LINES 1000
 static const unsigned long long SKIP_OFF = (BIGSKIP-RELAX_NUM_LINES)*LINE_SIZE_BYTES;
 #endif
@@ -528,7 +526,36 @@ out:
 }
 
 
+void fill_buffers(std::string basicString) {
+    std::ifstream f(basicString,std::ios_base::in);
+    if(f.is_open()){
+        //Reserve space for the buffers
+        // Byte size 8'358'363'968
+        f.seekg(0,std::ios_base::end);
+        const size_t fSize = f.tellg();
+        f.seekg(0,std::ios_base::beg);
+        f.clear();
+        const size_t num_elements = fSize/LINE_SIZE_BYTES;
+        mem_address_buf.reserve(num_elements);
+        mem_reqtype_buf.reserve(num_elements);
+        std::string line;
+        while(std::getline(f,line)){
+            const uint8_t is_load = line[0]=='R';
+            const uint64_t mem_address = std::stoull(line.substr(1), nullptr, 16);
+            const uint64_t page_start = page_start_from_mem_address(mem_address);
+            mem_address_buf.push_back(page_start);
+            mem_reqtype_buf.push_back(is_load);
+        }
+        std::cout<<"Finished filling arrays!"<<std::endl;
+    }
+    else{
+        exit(-1);
+    }
+    f.close();
+}
+
 void start(const Args& args, const std::unordered_map<std::string, json>& db) {
+
     constexpr std::array samples_div = {REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO,
                                   AVERAGE_SAMPLE_RATIO,
                                   0.2,0.4,0.6,0.8,1.0};
@@ -587,6 +614,12 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
             non_ratio_comparisons.emplace_back(compared_alg_name,baseline_alg_name);
         }
     }
+
+/*  TODO
+    //Fill the arrays buffers
+    fill_buffers(args.mem_trace_path);
+*/
+
 
     const std::string base_dir = fs::path(args.data_save_dir).lexically_normal().string() + "/";
     const fs::path standalone_dir = fs::path(base_dir + "standalone");
