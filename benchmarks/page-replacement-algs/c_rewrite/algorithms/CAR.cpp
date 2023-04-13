@@ -10,7 +10,7 @@ bool CAR::consume(page_t page_start) {
     auto in_cache = (page_data.in_list == T1 || page_data.in_list == T2);
     if (in_cache){
         if(!page_data.referenced) {
-            // TODO update_relative_indices(page_data);
+            update_relative_indices(page_data); // TODO comment out this line
             page_data.relative_index = caches[page_data.in_list].size()-(num_unreferenced[page_data.in_list]--);
             page_data.referenced = true;
         }
@@ -73,7 +73,7 @@ void CAR::replace() {
             // T1 is oversized
             auto& t1_head_data = page_to_data[caches[T1].front()];
             auto t1_head = *t1_head_data.at_iterator;
-            // TODO update_relative_indices(t1_head_data);
+            update_relative_indices(t1_head_data); // TODO comment out this line
             if(!t1_head_data.referenced){
                 t1_head_data.at_iterator = caches[B1].insert(caches[B1].end(),t1_head);
                 t1_head_data.in_list = B1;
@@ -90,7 +90,7 @@ void CAR::replace() {
             // T2 is oversized
             auto& t2_head_data = page_to_data[caches[T2].front()];
             auto t2_head = *t2_head_data.at_iterator;
-            // TODO update_relative_indices(t2_head_data);
+            update_relative_indices(t2_head_data); // TODO comment out this line
             if(!t2_head_data.referenced){
                 t2_head_data.at_iterator = caches[B2].insert(caches[B2].end(),t2_head);
                 t2_head_data.in_list = B2;

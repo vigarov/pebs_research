@@ -164,7 +164,7 @@ std::unordered_map<std::string, json> populate_or_get_db(const Args& args) {
 
 static constexpr double REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO = 0.01;
 static constexpr double AVERAGE_SAMPLE_RATIO = 0.05;
-static constexpr size_t BUFFER_SIZE = 1024*1024;
+static constexpr size_t BUFFER_SIZE = 1024*256;
 
 static constexpr const int ALG_DIV_PRECISION = 2;
 namespace page_cache_algs {
@@ -204,7 +204,6 @@ struct ThreadWorkAlgs{
 };
 
 typedef std::pair<ThreadWorkAlgs,ThreadWorkAlgs> thread_arg_t;
-std::string do_standalone(const std::string& standalone_div_root,std::vector<uint8_t> &done_standalone, page_cache_algs::type alg_type, size_t div_idx, double div_value ,size_t div_size = 0);
 
 template<typename It>
 size_t indexof(It start, It end, double value);
@@ -219,8 +218,8 @@ volatile uint8_t num_ready;
 volatile uint8_t continue_running = true;
 
 //Shared Buffers
-std::vector<page_t> mem_address_buf{};
-std::vector<uint8_t> mem_reqtype_buf{};
+std::array<page_t,BUFFER_SIZE> mem_address_buf{};
+std::array<uint8_t,BUFFER_SIZE> mem_reqtype_buf{};
 
 struct AlgInThread;
 
@@ -415,7 +414,7 @@ static void comparison_and_standalone(std::barrier<>& it_barrier, std::string co
                               << alg.considered_stores << ",#L=" << alg.considered_loads;
                     if (alg.twa.ratio > 0) {
                         ss << ", gt_ratio=" << alg.twa.ratio
-                                  << ", curr_ratio=" << alg.considered_loads / alg.considered_stores;
+                                  << ", curr_ratio=" << (static_cast<double>(alg.considered_loads) / static_cast<double>(alg.considered_stores));
                     }
                     ss << "), n_writes=" << n_writes << ",i=" << i;
                     std::cout<<ss.str()<<std::endl;
@@ -559,7 +558,7 @@ out:
     }
 }
 
-
+/*
 void fill_buffers(std::string basicString) {
     std::ifstream f(basicString,std::ios_base::in);
     if(f.is_open()){
@@ -586,6 +585,33 @@ void fill_buffers(std::string basicString) {
         exit(-1);
     }
     f.close();
+}
+*/
+static const std::string KERNEL_PREFIX = "kernel/";
+static const std::string USERSPACE_PREFIX = "userspace/";
+
+std::pair<std::string,std::string> do_standalone(const std::string& standalone_div_root,std::vector<uint8_t> &done_standalone, page_cache_algs::type alg_type, size_t div_idx,double div_value ,size_t div_size = 0){
+    size_t idx;
+    std::string extra;
+    if(div_size != 0 ){
+        idx = alg_type + (page_cache_algs::NUM_ALGS * div_size);
+        extra = "_R";
+    }
+    else{
+        idx = alg_type + (page_cache_algs::NUM_ALGS * div_idx);
+    }
+    const bool already_done = done_standalone.at(idx);
+    if(already_done) return {NO_STANDALONE,NO_STANDALONE};
+    else{
+        done_standalone[idx] = true;
+        auto after_standalone_name_k = KERNEL_PREFIX + get_alg_div_name(alg_type,div_value) + extra;
+        auto after_standalone_name_u = USERSPACE_PREFIX + get_alg_div_name(alg_type,div_value) + extra;
+        auto p_k = fs::path(standalone_div_root+after_standalone_name_k);
+        auto p_u = fs::path(standalone_div_root+after_standalone_name_u);
+        fs::create_directories(p_k);
+        fs::create_directories(p_u);
+        return {fs::absolute(p_k).lexically_normal().string() + '/',fs::absolute(p_u).lexically_normal().string() + '/'};
+    }
 }
 
 void start(const Args& args, const std::unordered_map<std::string, json>& db) {
@@ -663,7 +689,7 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
     fs::create_directories(comp_dir);
     const std::string comp_dir_as_posix = comp_dir.lexically_normal().string() + "/";
 
-    const size_t num_comp_processes = ratio_comparisons.size() + non_ratio_comparisons.size();
+    const size_t num_comp_processes = (ratio_comparisons.size() + non_ratio_comparisons.size())*2; //*2 since we do userspace and kernel space
 
     //Setup shared Synchronisation and Memory
     num_ready = num_comp_processes;
@@ -676,24 +702,34 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
                                          false);
     for(auto& comparison : non_ratio_comparisons){
         auto do_standalone_1 = do_standalone(standalone_dir_as_posix,done_standalone, comparison.first.first,indexof(samples_div.begin(),samples_div.end(), comparison.first.second),comparison.first.second);
-        const ThreadWorkAlgs t1{comparison.first, do_standalone_1, -1};
-        auto standalone_2 = do_standalone_1 == NO_STANDALONE ? do_standalone(standalone_dir_as_posix,done_standalone, comparison.second.first,indexof(samples_div.begin(),samples_div.end(), comparison.second.second),comparison.second.second) : NO_STANDALONE;
-        const ThreadWorkAlgs t2{comparison.second, standalone_2, -1};
-        auto comp_save_dir_path = fs::path(comp_dir_as_posix+get_alg_div_name(comparison.first)+"_vs_"+get_alg_div_name(comparison.second));
-        fs::create_directories(comp_save_dir_path);
-        auto comp_save_dir_path_str = fs::absolute(comp_save_dir_path).lexically_normal().string()+'/';
-        all_threads.emplace_back(comparison_and_standalone,std::ref(it_barrier),comp_save_dir_path_str,thread_arg_t({t1,t2}));
+        ThreadWorkAlgs t1{comparison.first, do_standalone_1.first, -1};
+        auto standalone_2 = do_standalone_1.first == NO_STANDALONE ? do_standalone(standalone_dir_as_posix,done_standalone, comparison.second.first,indexof(samples_div.begin(),samples_div.end(), comparison.second.second),comparison.second.second) : std::pair<std::string,std::string>(NO_STANDALONE,NO_STANDALONE);
+        ThreadWorkAlgs t2{comparison.second, standalone_2.first, -1};
+        auto comp_save_dir_path_k = fs::path(comp_dir_as_posix+KERNEL_PREFIX+get_alg_div_name(comparison.first)+"_vs_"+get_alg_div_name(comparison.second));
+        fs::create_directories(comp_save_dir_path_k);
+        all_threads.emplace_back(comparison_and_standalone,std::ref(it_barrier),fs::absolute(comp_save_dir_path_k).lexically_normal().string()+'/',thread_arg_t({t1,t2}));
+        t1.is_userspace = t2.is_userspace = 1;
+        t1.standalone_save_dir = do_standalone_1.second;
+        t2.standalone_save_dir = standalone_2.second;
+        auto comp_save_dir_path_u = fs::path(comp_dir_as_posix+USERSPACE_PREFIX+get_alg_div_name(comparison.first)+"_vs_"+get_alg_div_name(comparison.second));
+        fs::create_directories(comp_save_dir_path_u);
+        all_threads.emplace_back(comparison_and_standalone,std::ref(it_barrier),fs::absolute(comp_save_dir_path_u).lexically_normal().string(),thread_arg_t({t1,t2}));
     }
     for(auto& comparison : ratio_comparisons){
         auto do_standalone_1 = do_standalone(standalone_dir_as_posix,done_standalone, comparison.first.first,indexof(samples_div.begin(),samples_div.end(), comparison.first.second),comparison.first.second,samples_div.size());
         const auto ratio = db.at(args.mem_trace_path).at("ratio").get<double>();
-        const ThreadWorkAlgs t1{comparison.first, do_standalone_1, ratio};
-        auto standalone_2 = do_standalone_1 == NO_STANDALONE ? do_standalone(standalone_dir_as_posix,done_standalone, comparison.second.first,indexof(samples_div.begin(),samples_div.end(), comparison.second.second),comparison.second.second) : NO_STANDALONE;
-        const ThreadWorkAlgs t2{comparison.second, standalone_2, -1};
-        auto comp_save_dir_path = fs::path(comp_dir_as_posix+get_alg_div_name(comparison.first)+"_R"+"_vs_"+get_alg_div_name(comparison.second));
-        fs::create_directories(comp_save_dir_path);
-        auto comp_save_dir_path_str = fs::absolute(comp_save_dir_path).lexically_normal().string()+'/';
-        all_threads.emplace_back(comparison_and_standalone,std::ref(it_barrier),comp_save_dir_path_str,thread_arg_t({t1,t2}));
+        ThreadWorkAlgs t1{comparison.first, do_standalone_1.first, ratio};
+        auto standalone_2 = do_standalone_1.first == NO_STANDALONE ? do_standalone(standalone_dir_as_posix,done_standalone, comparison.second.first,indexof(samples_div.begin(),samples_div.end(), comparison.second.second),comparison.second.second) : std::pair<std::string,std::string>(NO_STANDALONE,NO_STANDALONE);
+        ThreadWorkAlgs t2{comparison.second, standalone_2.first, -1};
+        auto comp_save_dir_path_k = fs::path(comp_dir_as_posix+KERNEL_PREFIX+get_alg_div_name(comparison.first)+"_vs_"+get_alg_div_name(comparison.second));
+        fs::create_directories(comp_save_dir_path_k);
+        all_threads.emplace_back(comparison_and_standalone,std::ref(it_barrier),fs::absolute(comp_save_dir_path_k).lexically_normal().string(),thread_arg_t({t1,t2}));
+        t1.is_userspace = t2.is_userspace = 1;
+        t1.standalone_save_dir = do_standalone_1.second;
+        t2.standalone_save_dir = standalone_2.second;
+        auto comp_save_dir_path_u = fs::path(comp_dir_as_posix+USERSPACE_PREFIX+get_alg_div_name(comparison.first)+"_vs_"+get_alg_div_name(comparison.second));
+        fs::create_directories(comp_save_dir_path_u);
+        all_threads.emplace_back(comparison_and_standalone,std::ref(it_barrier),fs::absolute(comp_save_dir_path_u).lexically_normal().string(),thread_arg_t({t1,t2}));
     }
 
     std::jthread reader(reader_thread,args.mem_trace_path);
@@ -710,28 +746,7 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
 template<typename It>
 size_t indexof(It start, It end, double value) { return std::distance(start, std::find(start, end, value)); }
 
-std::string do_standalone(const std::string& standalone_div_root,std::vector<uint8_t> &done_standalone, page_cache_algs::type alg_type, size_t div_idx,double div_value ,size_t div_size){
-    size_t idx;
-    std::string extra;
-    if(div_size != 0 ){
-        idx = alg_type + (page_cache_algs::NUM_ALGS * div_size);
-        extra = "_R";
-    }
-    else{
-        idx = alg_type + (page_cache_algs::NUM_ALGS * div_idx);
-    }
-    const bool already_done = done_standalone.at(idx);
-    if(already_done) return NO_STANDALONE;
-    else{
-        done_standalone[idx] = true;
-        auto after_standalone_name = get_alg_div_name(alg_type,div_value) + extra;
-        auto p = fs::path(standalone_div_root+after_standalone_name);
-        fs::create_directories(p);
-        return fs::absolute(p).lexically_normal().string() + '/';
-    }
-}
-
-#define TESTING 1
+#define TESTING 0
 
 int main(int argc, char* argv[]) {
     const Args args(argc, argv);

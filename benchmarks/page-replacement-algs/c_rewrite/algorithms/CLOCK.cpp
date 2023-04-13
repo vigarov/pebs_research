@@ -20,7 +20,7 @@ bool CLOCK::consume(page_t page_start){
         }
     }
     bool const changed = page_data.counter!=i;
-    page_data.counter = i; // TODO update_page_counter_and_relevant_indices(page_data);
+    update_page_counter_and_relevant_indices(page_data); // TODO page_data.counter = i;  
     return changed;
 }
 
