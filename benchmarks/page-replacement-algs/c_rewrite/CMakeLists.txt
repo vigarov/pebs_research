@@ -10,6 +10,9 @@ elseif(CMAKE_BUILD_TYPE MATCHES "Release")
 endif(CMAKE_BUILD_TYPE MATCHES "Debug")
 find_package(ZLIB)
 find_package(Boost)
+if(Boost_VERSION_MINOR GREATER_EQUAL 80)
+    add_definitions(-DUSE_BOOST_1_80P=1)
+endif(Boost_VERSION_MINOR GREATER_EQUAL 80)
 
 add_executable(c_rewrite main.cpp algorithms/GenericAlgorithm.h algorithms/LRU.cpp algorithms/LRU.h algorithms/CLOCK.cpp algorithms/CLOCK.h algorithms/ARC.cpp algorithms/ARC.h algorithms/CAR.cpp algorithms/CAR.h nlohmann/json.hpp tests/cprng.h tests/linux_crc16.h tests/test.cpp tests/test.h)
 

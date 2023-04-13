@@ -225,7 +225,7 @@ std::vector<uint8_t> mem_reqtype_buf{};
 struct AlgInThread;
 
 
-typedef bool (*consideration_method)(const AlgInThread& alg,size_t seen,uint8_t is_load);
+typedef bool (*consideration_method)(uint8_t is_page_fault, const AlgInThread& alg,size_t seen,uint8_t is_load);
 
 typedef std::pair<uint64_t,uint64_t> temperature_change_log;
 typedef std::vector<temperature_change_log> temp_log_t;
@@ -246,15 +246,49 @@ struct AlgInThread{
     ThreadWorkAlgs twa;
 };
 
-inline bool should_consider(const AlgInThread& alg,size_t seen,uint8_t is_load) {
-    (void)is_load;
-    return (static_cast<double>(alg.considered_loads + alg.considered_stores) / static_cast<double>(seen)) <= alg.twa.alg_info.second;
+namespace consideration_methods{
+    static inline bool consider_div(const AlgInThread &alg, size_t seen) {
+        return (static_cast<double>(alg.considered_loads + alg.considered_stores) / static_cast<double>(seen)) <= alg.twa.alg_info.second;
+    }
+
+    static inline bool
+    should_consider_div_kernel(uint8_t is_page_fault, const AlgInThread &alg, size_t seen, uint8_t is_load) {
+        (void) is_load;
+        return is_page_fault || consider_div(alg, seen);
+    }
+
+    static inline bool consider_ratio(const AlgInThread &alg, uint8_t is_load) {
+        return (is_load && ((static_cast<double>(alg.considered_loads) / static_cast<double>(alg.considered_stores)) <= alg.twa.ratio))
+               || (!is_load && (alg.twa.ratio <= (static_cast<double>(alg.considered_loads) / static_cast<double>(alg.considered_stores))));
+    }
+
+
+    static inline bool
+    should_consider_ratio_kernel(uint8_t is_page_fault, const AlgInThread &alg, size_t seen, uint8_t is_load) {
+        return should_consider_div_kernel(is_page_fault, alg, seen, is_load) && consider_ratio(alg, is_load);
+    }
+
+    static inline bool
+    should_consider_div_uspace(uint8_t is_page_fault, const AlgInThread &alg, size_t seen, uint8_t is_load) {
+        (void) is_load;
+        (void) is_page_fault;
+        return consider_div(alg, seen);
+    }
+
+    static inline bool
+    should_consider_ratio_uspace(uint8_t is_page_fault, const AlgInThread &alg, size_t seen, uint8_t is_load) {
+        return should_consider_div_uspace(is_page_fault, alg, seen, is_load) && consider_ratio(alg, is_load);
+    }
+
+    static constexpr consideration_method all[2][2] = {{should_consider_div_kernel, should_consider_ratio_kernel},
+                                 {should_consider_div_uspace, should_consider_ratio_uspace}};
+
+
+    static consideration_method get_consideration_method(bool is_userspace, bool is_ratio){
+        return all[is_userspace][is_ratio];
+    }
 }
 
-inline bool should_consider_ratio(const AlgInThread& alg,size_t seen,uint8_t is_load) {
-    return should_consider(alg,seen,is_load) && ((is_load && ((static_cast<double>(alg.considered_loads) / static_cast<double>(alg.considered_stores)) <= alg.twa.ratio))
-                                 or (not is_load && (alg.twa.ratio <= (static_cast<double>(alg.considered_loads) / static_cast<double>(alg.considered_stores)))));
-}
 
 static const std::string PTCHANGE_DIR_NAME = "ptchange";
 static const std::string OTHER_DATA_FN = "stats.csv";
@@ -336,8 +370,8 @@ static void comparison_and_standalone(std::barrier<>& it_barrier, std::string co
     size_t n_writes = 0,seen = 0;
     //Create algs
 
-    AlgInThread ait1 = {.alg=std::move(page_cache_algs::get_alg(twas.first.alg_info.first)),.considerationMethod=(twas.first.ratio<0 ? should_consider : should_consider_ratio),.twa=std::move(twas.first)};
-    AlgInThread ait2 = {.alg=std::move(page_cache_algs::get_alg(twas.second.alg_info.first)),.considerationMethod=(twas.second.ratio<0 ? should_consider : should_consider_ratio),.twa=std::move(twas.second)};
+    AlgInThread ait1 = {.alg=std::move(page_cache_algs::get_alg(twas.first.alg_info.first)),.considerationMethod=consideration_methods::get_consideration_method(twas.first.is_userspace,twas.first.ratio>0),.twa=std::move(twas.first)};
+    AlgInThread ait2 = {.alg=std::move(page_cache_algs::get_alg(twas.second.alg_info.first)),.considerationMethod=consideration_methods::get_consideration_method(twas.second.is_userspace,twas.second.ratio>0),.twa=std::move(twas.second)};
     {
         std::string alg_dir;
         if ((alg_dir=ait1.twa.standalone_save_dir) != NO_STANDALONE || (alg_dir=ait2.twa.standalone_save_dir) != NO_STANDALONE) {
@@ -373,7 +407,7 @@ static void comparison_and_standalone(std::barrier<>& it_barrier, std::string co
 
             seen += 1;
             for(auto& alg : alg_arr){
-                if (seen % 10'000'000 == 0){
+                if (seen % 1'000'000 == 0){
                     std::stringstream ss;
                     ss << tid << " - Reached seen = " << seen << "\n"
                               << "SampleRate=" << alg.twa.alg_info.second << ",#T="
@@ -388,7 +422,7 @@ static void comparison_and_standalone(std::barrier<>& it_barrier, std::string co
                 }
                 auto pfault = alg.alg->is_page_fault(page_base);
                 //auto should_break = (alg.twa.alg_info.second == 1) && (alg.twa.standalone_save_dir != NO_STANDALONE) && (alg.twa.alg_info.first == page_cache_algs::LRU_t);
-                if(pfault || alg.considerationMethod(alg,seen,is_load)){
+                if(alg.considerationMethod(pfault,alg,seen,is_load)){
                     if(is_load){
                         alg.considered_loads++;
                     }else{

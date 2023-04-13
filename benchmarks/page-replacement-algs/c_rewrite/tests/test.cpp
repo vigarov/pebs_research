@@ -1,5 +1,7 @@
 #include <fstream>
+# ifdef USE_BOOST_1_80P
 #include <boost/unordered/unordered_flat_map.hpp>
+# endif
 #include <boost/unordered_map.hpp>
 #include <random>
 #include <chrono>
@@ -138,7 +140,9 @@ static void test_ma_all(){
 
 static void perf_separator_test1(std::unordered_map<uint64_t, LRU_page_data> &am, const page_t page_start) { am[page_start]; }
 
+#ifdef USE_BOOST_1_80P
 static void perf_separator_test2(boost::unordered_flat_map<uint64_t, LRU_page_data> &bm, const page_t page_start) { bm[page_start]; }
+#endif
 
 static void perf_separator_test3(boost::unordered_map<uint64_t, LRU_page_data> &cm, const page_t page_start) { cm[page_start]; }
 
@@ -146,7 +150,10 @@ static void test_file_maps(const std::string& path_to_mem_trace){
     std::ifstream f(path_to_mem_trace);
     if (f.is_open()) {
         std::unordered_map<uint64_t, LRU_page_data> am{};
+
+# ifdef USE_BOOST_1_80P
         boost::unordered_flat_map<uint64_t,LRU_page_data> bm{};
+#endif
         boost::unordered_map<uint64_t, LRU_page_data> cm{};
         std::string line;
         for (unsigned long long i = 0; i < 10*FUZZ_SIZE; i++) {
@@ -154,11 +161,15 @@ static void test_file_maps(const std::string& path_to_mem_trace){
             const uint64_t mem_address = std::stoull(line.substr(1), nullptr, 16);
             const auto page_start = page_start_from_mem_address(mem_address);
             perf_separator_test1(am, page_start);
-            perf_separator_test2(bm, page_start);
+# ifdef USE_BOOST_1_80P
+perf_separator_test2(bm, page_start);
+#endif
             perf_separator_test3(cm, page_start);
         }
         std::cout<< "am:"<<am.size() << " "<<am.bucket_count()<<'\n';
+# ifdef USE_BOOST_1_80P
         std::cout<< "bm:"<<bm.size() << " "<<bm.bucket_count()<<'\n';
+#endif
         std::cout<< "cm:"<<cm.size() << " "<<cm.bucket_count()<<'\n';
     }
     f.close();
@@ -209,6 +220,7 @@ static void test_fuzz(){
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+# ifdef USE_BOOST_1_80P
 struct BOOST_TEST_LRU_nd{
     boost::unordered_flat_map<page_t,LRU_page_data> prev_page_to_data;
 };
@@ -399,7 +411,7 @@ static void test_realistic(const std::string& path_to_mem_trace){
     }
     f.close();
 }
-
+#endif
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #define LINE_SIZE 15 //W0x7fffffffd988
@@ -570,7 +582,20 @@ static void test_file_read_speed(const std::string &path_to_mem_trace) {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void arc_t(__off_t length, const char *addr) {
-    const size_t page_cache_size = 16 * 1024;
+    cpu_set_t  mask;
+    CPU_ZERO(&mask);
+    auto cpu_num = sched_getcpu();
+    if(cpu_num == -1){
+        std::cerr<<"ARC Couldn't get CPU num" << std::endl;
+        exit(-1);
+    }
+    CPU_SET(cpu_num,&mask);
+    int result = pthread_setaffinity_np(pthread_self(), sizeof(mask), &mask);
+    if(result !=0){
+            std::cerr << "Error calling pthread_setaffinity_np: " << result << "\n";
+    }
+
+    const size_t page_cache_size = 32 * 1024;
     ARC a1(page_cache_size);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
@@ -582,8 +607,7 @@ void arc_t(__off_t length, const char *addr) {
         address = strtoull(addr+at,&str_end,16);
         at+= (str_end+2-(addr+at));
         a1.consume(page_start_from_mem_address(address));
-        for(const auto& asdasd : *a1.get_cache_iterable())
-            ;
+
     }
     end = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsed_seconds = end - start;
@@ -592,8 +616,19 @@ void arc_t(__off_t length, const char *addr) {
               << "elapsed time: " << elapsed_seconds.count() << "s"<< a1.toString()
               << std::endl;
 }
-void car_t(__off_t length, const char *addr) {
-    const size_t page_cache_size = 16 * 1024;
+void car_t(__off_t length, const char *addr) {    cpu_set_t  mask;
+    CPU_ZERO(&mask);
+    auto cpu_num = sched_getcpu();
+    if(cpu_num == -1){
+        std::cerr<<"CAR Couldn't get CPU num" << std::endl;
+        exit(-1);
+    }
+    CPU_SET(cpu_num,&mask);
+    int result = pthread_setaffinity_np(pthread_self(), sizeof(mask), &mask);
+    if(result !=0){
+        std::cerr << "Error calling pthread_setaffinity_np: " << result << "\n";
+    }
+    const size_t page_cache_size = 32 * 1024;
     CAR a1(page_cache_size);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
@@ -605,8 +640,7 @@ void car_t(__off_t length, const char *addr) {
         address = strtoull(addr+at,&str_end,16);
         at+= (str_end+2-(addr+at));
         a1.consume(page_start_from_mem_address(address));
-        for(const auto& asdasd : *a1.get_cache_iterable())
-            ;
+
     }
     end = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsed_seconds = end - start;
@@ -616,7 +650,19 @@ void car_t(__off_t length, const char *addr) {
               << std::endl;
 }
 void lru_t(__off_t length, const char *addr) {
-    const size_t page_cache_size = 16 * 1024;
+    cpu_set_t  mask;
+    CPU_ZERO(&mask);
+    auto cpu_num = sched_getcpu();
+    if(cpu_num == -1){
+        std::cerr<<"LRU Couldn't get CPU num" << std::endl;
+        exit(-1);
+    }
+    CPU_SET(cpu_num,&mask);
+    int result = pthread_setaffinity_np(pthread_self(), sizeof(mask), &mask);
+    if(result !=0){
+        std::cerr << "Error calling pthread_setaffinity_np: " << result << "\n";
+    }
+    const size_t page_cache_size = 32 * 1024;
     LRU_K a1(page_cache_size,2);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
@@ -628,8 +674,7 @@ void lru_t(__off_t length, const char *addr) {
         address = strtoull(addr+at,&str_end,16);
         at+= (str_end+2-(addr+at));
         a1.consume(page_start_from_mem_address(address));
-        for(const auto& asdasd : *a1.get_cache_iterable())
-            ;
+
     }
     end = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsed_seconds = end - start;
@@ -639,7 +684,19 @@ void lru_t(__off_t length, const char *addr) {
               << std::endl;
 }
 void c_t(__off_t length, const char *addr) {
-    const size_t page_cache_size = 16 * 1024;
+    cpu_set_t  mask;
+    CPU_ZERO(&mask);
+    auto cpu_num = sched_getcpu();
+    if(cpu_num == -1){
+        std::cerr<<"CLOCK Couldn't get CPU num" << std::endl;
+        exit(-1);
+    }
+    CPU_SET(cpu_num,&mask);
+    int result = pthread_setaffinity_np(pthread_self(), sizeof(mask), &mask);
+    if(result !=0){
+        std::cerr << "Error calling pthread_setaffinity_np: " << result << "\n";
+    }
+    const size_t page_cache_size = 32 * 1024;
     CLOCK a1(page_cache_size,2);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
@@ -651,8 +708,7 @@ void c_t(__off_t length, const char *addr) {
         address = strtoull(addr+at,&str_end,16);
         at+= (str_end+2-(addr+at));
         a1.consume(page_start_from_mem_address(address));
-        for(const auto& asdasd : *a1.get_cache_iterable())
-            ;
+
     }
     end = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsed_seconds = end - start;
@@ -676,7 +732,7 @@ void test_full_all_mt(const std::string &path_to_mem_trace) {
     if (fstat(fd, &sb) == -1)
         std::cout<<"Couldn't fstat the file"<<std::endl;
 
-    size_t length = static_cast<size_t>(50'000'000) * (LINE_SIZE+1);
+    const size_t length = sb.st_size;//static_cast<size_t>(50'000'000) * (LINE_SIZE+1);
 
     const char* addr = static_cast<const char*>(mmap(nullptr, length, PROT_READ, MAP_PRIVATE, fd, 0u));
     if (addr == MAP_FAILED)
@@ -753,6 +809,82 @@ static void lru_consume_all(const std::string &path_to_mem_trace) {
     close(fd);
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void arc_np_t(__off_t length, const char *addr) {
+    const size_t page_cache_size = 32 * 1024;
+    ARC a1(page_cache_size);
+    uint64_t address;
+    auto end = std::chrono::system_clock::now();
+    auto start = std::chrono::system_clock::now();
+    uint64_t at = 7'000'000 * (LINE_SIZE+1)+1;
+    start = std::chrono::system_clock::now();
+    while(at<length){
+        char* str_end = nullptr;
+        address = strtoull(addr+at,&str_end,16);
+        at+= (str_end+2-(addr+at));
+        a1.consume(page_start_from_mem_address(address));
+
+    }
+    end = std::chrono::system_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end - start;
+
+    std::cout << "ARCNP finished" << " "
+              << "elapsed time: " << elapsed_seconds.count() << "s"<< a1.toString()
+              << std::endl;
+}
+
+
+static void arc_compare_CPU_pin(const std::string &path_to_mem_trace) {
+    const size_t page_cache_size = 16*1024;
+
+    bool is_load;
+    ptr_t address;
+    auto end = std::chrono::system_clock::now();
+    auto start = std::chrono::system_clock::now();
+
+    start = std::chrono::system_clock::now();
+
+    int fd = open(path_to_mem_trace.c_str(), O_RDONLY);
+    if (fd == -1)
+        std::cout<<"Couldn't syscall open the file"<<std::endl;
+
+    // obtain file size
+    struct stat sb;
+    if (fstat(fd, &sb) == -1)
+        std::cout<<"Couldn't fstat the file"<<std::endl;
+
+    auto length = sb.st_size;
+
+    const char* addr = static_cast<const char*>(mmap(nullptr, length, PROT_READ, MAP_PRIVATE, fd, 0u));
+    if (addr == MAP_FAILED)
+        std::cout<<"Couldn't mmap the file"<<std::endl;
+
+    ARC c1(page_cache_size);
+
+    end = std::chrono::system_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end - start;
+    std::cout << "mmap finished open " << "elapsed time: " << elapsed_seconds.count() << "s" << std::endl;
+
+    start = std::chrono::system_clock::now();
+
+    std::array a = {std::jthread(arc_t,length,addr),std::jthread(arc_np_t,length,addr)};
+
+    for(auto& t : a) t.join();
+
+
+    end = std::chrono::system_clock::now();
+
+    std::cout << "MMAP setup finished computation" << " "
+              << "elapsed time: " << elapsed_seconds.count() << "s" << "; data:" << is_load << address
+              << std::endl;
+
+    auto ret = munmap((void *) addr, length);
+    if(ret)
+        std::cout<<"Couldn't munmap the file"<<std::endl;
+    close(fd);
+
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -765,5 +897,5 @@ void test_all(const std::string& path_to_mem_trace){
 
 
 void test_latest(const std::string& path_to_mem_trace){
-    test_full_all_mt(path_to_mem_trace);
+    arc_compare_CPU_pin(path_to_mem_trace);
 }
