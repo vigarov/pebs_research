@@ -16,6 +16,7 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <thread>
+#include <zlib.h>
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -450,7 +451,7 @@ static void test_file_read_speed(const std::string &path_to_mem_trace) {
 
     uint64_t at = 0;
     start = std::chrono::system_clock::now();
-    while(at<length){
+    while(at<static_cast<unsigned long>(length)){
         is_load = addr[at++] == 'R';
         char* str_end = nullptr;
         address = std::strtoull(addr+at,&str_end,16);
@@ -465,7 +466,7 @@ static void test_file_read_speed(const std::string &path_to_mem_trace) {
 
     at = 0;
     start = std::chrono::system_clock::now();
-    while(at<length){
+    while(at<static_cast<unsigned long>(length)){
         is_load = addr[at++] == 'R';
         char* str_end = nullptr;
         address = std::strtoull(addr+at,&str_end,16);
@@ -602,7 +603,7 @@ void arc_t(__off_t length, const char *addr) {
     auto start = std::chrono::system_clock::now();
     uint64_t at = 7'000'000 * (LINE_SIZE+1)+1;
     start = std::chrono::system_clock::now();
-    while(at<length){
+    while(at<static_cast<unsigned long>(length)){
         char* str_end = nullptr;
         address = strtoull(addr+at,&str_end,16);
         at+= (str_end+2-(addr+at));
@@ -635,7 +636,7 @@ void car_t(__off_t length, const char *addr) {    cpu_set_t  mask;
     auto start = std::chrono::system_clock::now();
     uint64_t at = 7'000'000 * (LINE_SIZE+1)+1;
     start = std::chrono::system_clock::now();
-    while(at<length){
+    while(at<static_cast<unsigned long>(length)){
         char* str_end = nullptr;
         address = strtoull(addr+at,&str_end,16);
         at+= (str_end+2-(addr+at));
@@ -669,7 +670,7 @@ void lru_t(__off_t length, const char *addr) {
     auto start = std::chrono::system_clock::now();
     uint64_t at = 7'000'000 * (LINE_SIZE+1)+1;
     start = std::chrono::system_clock::now();
-    while(at<length){
+    while(at<static_cast<unsigned long>(length)){
         char* str_end = nullptr;
         address = strtoull(addr+at,&str_end,16);
         at+= (str_end+2-(addr+at));
@@ -703,7 +704,7 @@ void c_t(__off_t length, const char *addr) {
     auto start = std::chrono::system_clock::now();
     uint64_t at = 7'000'000 * (LINE_SIZE+1)+1;
     start = std::chrono::system_clock::now();
-    while(at<length){
+    while(at<static_cast<unsigned long>(length)){
         char* str_end = nullptr;
         address = strtoull(addr+at,&str_end,16);
         at+= (str_end+2-(addr+at));
@@ -789,7 +790,7 @@ static void lru_consume_all(const std::string &path_to_mem_trace) {
     uint64_t at = 0;
     start = std::chrono::system_clock::now();
     //size_t i = 0;
-    while(at<length){
+    while(at<static_cast<unsigned long>(length)){
         is_load = addr[at++] == 'R';
         char* str_end = nullptr;
         address = std::strtoull(addr+at,&str_end,16);
@@ -819,7 +820,7 @@ void arc_np_t(__off_t length, const char *addr) {
     auto start = std::chrono::system_clock::now();
     uint64_t at = 7'000'000 * (LINE_SIZE+1)+1;
     start = std::chrono::system_clock::now();
-    while(at<length){
+    while(at<static_cast<unsigned long>(length)){
         char* str_end = nullptr;
         address = strtoull(addr+at,&str_end,16);
         at+= (str_end+2-(addr+at));
@@ -838,8 +839,8 @@ void arc_np_t(__off_t length, const char *addr) {
 static void arc_compare_CPU_pin(const std::string &path_to_mem_trace) {
     const size_t page_cache_size = 16*1024;
 
-    bool is_load;
-    ptr_t address;
+    bool is_load = false;
+    ptr_t address = 0;
     auto end = std::chrono::system_clock::now();
     auto start = std::chrono::system_clock::now();
 
@@ -888,8 +889,170 @@ static void arc_compare_CPU_pin(const std::string &path_to_mem_trace) {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void test_all(const std::string& path_to_mem_trace){
+#ifdef dhifsbjdsfhjdsk
+namespace test {
+    class DEQUE_LRU {
+    public:
+        explicit DEQUE_LRU(uint16_t page_cache_size) : page_cache_size(page_cache_size) {};
 
+        bool consume(page_t page_start) {
+            bool changed = true;
+            count_stamp += 1;
+            auto page_fault = is_page_fault(page_start);
+            auto &page_data = page_to_data[page_start];
+            auto &histories = page_data.history;
+            //For K!=2, if(histories.size() != K) {/*set K empty elements*/}
+            histories.pop_back();
+            histories.push_front(count_stamp);
+            if (page_fault) {
+                if (page_cache.size() == page_cache_size) { //Full, must replace
+                    auto victim_page_it = std::prev(page_cache.end());
+                    page_to_data.erase(*victim_page_it);
+                    page_cache.erase(victim_page_it);
+                }
+                page_data.index = page_cache.size();
+                page_data.at_iterator = page_cache.insert(page_cache.end(), page_start);
+                //Keeps sort since page_fault --> not in history --> K-1 = 0 == min
+            } else { //page in cache
+                //Keep the page cache sorted; page_data[K-1] must be compared to all subsequent page_data[K-1]
+                auto it = page_data.at_iterator;
+                if (it != page_cache.begin()) {
+                    auto page_before = std::prev(page_cache.erase(it));
+                    while (page_before != page_cache.begin() &&
+                           page_to_data[*page_before].history[2 - 1] < histories[2 - 1]) {
+                        page_to_data[*page_before].index++;
+                        page_before = std::prev(page_before);
+                        page_data.index--;
+                    }
+                    if (page_before != page_cache.begin() ||
+                        /*page_before == page_cache.begin()*/ page_to_data[*page_before].history[2 - 1] >
+                                                              histories[2 - 1]) {
+                        page_before = std::next(page_before);
+                    } else {//: we're at begin AND begin is smaller than us --> we must insert at the beginning, aka before begin
+                        page_to_data[*page_before].index++;
+                        page_data.index--;
+                    }
+                    page_data.at_iterator = page_cache.insert(page_before, page_start);
+                } else {
+                    changed = false;
+                }
+            }
+            return changed;
+        };
+
+        temp_t get_temperature(page_t page, std::optional<std::shared_ptr<BOOST_TEST_LRU_nd>> necessary_data) const {
+            if (necessary_data == std::nullopt) return page_cache.size() - 1 - page_to_data.at(page).index;
+            else {
+                auto &nd = *necessary_data.value();
+                return nd.prev_page_to_data.size() - 1 - nd.prev_page_to_data.at(page).index;
+            }
+        }; // 0 = cold
+        std::unique_ptr<nd_t> get_necessary_data() {
+            LRU_temp_necessary_data lrutnd{page_to_data};
+            return std::make_unique<nd_t>(std::move(lrutnd));
+        }
+
+        inline bool is_page_fault(page_t page) const { return !page_to_data.contains(page); };
+
+        temp_t compare_to_previous(std::shared_ptr<BOOST_TEST_LRU_nd> prev_nd) {
+            temp_t sum = 0;
+            auto &prevptd = prev_nd->prev_page_to_data;
+            for (const auto &page: page_cache) {
+                if (prevptd.contains(page)) {
+                    sum += std::abs(static_cast<long long>(get_temperature(page, std::nullopt)) -
+                                    static_cast<long long>(get_temperature(page, prev_nd)));
+                }
+            }
+            return sum;
+        };
+
+        const std::deque<uint64_t> *get_cache_iterable() const { return &page_cache; }
+
+        virtual std::string toString() { return name() + " : cache = " + cache_to_string(10); };
+    private:
+        std::string name() { return "DEQUE TEST LRU"; }
+
+        std::deque<uint64_t> page_cache{}; // idx 0 = MRU; idx size-1 = LRU, sorted by second history
+        std::unordered_map<page_t, updateHere> page_to_data;
+        uint64_t count_stamp = 0;
+        const size_t page_cache_size;
+
+        std::string cache_to_string(size_t num_elements) {
+            if (num_elements > page_cache.size()) num_elements = page_cache.size();
+            std::string ret("[");
+            ret += page_iterable_to_str(page_cache.begin(), num_elements, page_cache.end());
+            ret += ']';
+            return ret;
+        };
+
+        template<typename Iterator>
+        std::string page_iterable_to_str(Iterator start, size_t num_elements, Iterator max) {
+            std::ostringstream oss;
+            if (start != max) { //== non-empty
+                while (num_elements-- && start != max) {
+                    oss << std::hex << *start << ',';
+                    start = std::next(start);
+                }
+            }
+            return oss.str();
+        };
+
+    };
+}
+#endif
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+static void create_page_array_mem_trace(const std::string& path_to_mem_trace){
+    (void)path_to_mem_trace;
+    std::ifstream f("/home/vigarov/research/benchmarks/results/mem_trace_page_array.log");
+    if (f.is_open()) {
+        std::string line;
+        constexpr size_t cache_size = 6;
+        auto alg = CAR(cache_size);
+        std::vector<std::pair<uint64_t,uint64_t>> change_diffs;
+        size_t i = 0;
+        std::shared_ptr<nd_t> nd;
+        temp_t sum = 0,prev_sum = 1;
+        bool emplaced_previously = true;
+        while(std::getline(f,line)){
+            auto is_load = line[0]=='R';
+            (void) is_load;
+            auto address = page_start_from_mem_address(std::stoull(line.substr(1), nullptr, 16));
+            auto changed = alg.consume(address);
+            if(i!=0 && changed) {
+                sum = alg.compare_to_previous(nd);
+            }
+            else{sum = 0;}
+            if(sum!=prev_sum) {
+                if(!emplaced_previously) change_diffs.emplace_back(i-1, prev_sum);
+                change_diffs.emplace_back(i, sum);
+                prev_sum = sum;
+                emplaced_previously = true;
+            }
+            else{
+                emplaced_previously = false;
+            }
+            if(!changed) std::cerr << "not changed!!!" <<std::endl;
+            nd = alg.get_necessary_data();
+            i++;
+        }
+        gzFile save_file = gzopen("/home/vigarov/research/benchmarks/page-replacement-algs/c_rewrite/test_arr_odir/test_output.gz", "wb");
+        if (save_file == nullptr) {
+            std::cerr << "Error: Could not open file " << "test_output.gz" << std::endl;
+            goto close;
+        }
+        std::cout << sizeof(decltype(change_diffs)::value_type) << "  " << sizeof(std::pair<uint64_t,uint64_t>) << "   " << 2*sizeof(uint64_t) << std::endl;
+        gzwrite(save_file, change_diffs.data(), change_diffs.size() * sizeof(decltype(change_diffs)::value_type));
+        gzclose(save_file);
+close:
+        f.close();
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void test_all(const std::string& path_to_mem_trace){
     test_ma_all();
     test_file_maps(path_to_mem_trace);
     test_fuzz();
@@ -897,5 +1060,5 @@ void test_all(const std::string& path_to_mem_trace){
 
 
 void test_latest(const std::string& path_to_mem_trace){
-    arc_compare_CPU_pin(path_to_mem_trace);
+    create_page_array_mem_trace(path_to_mem_trace);
 }
