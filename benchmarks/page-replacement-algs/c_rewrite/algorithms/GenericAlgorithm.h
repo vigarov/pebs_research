@@ -100,13 +100,13 @@ class dual_container_iterator : public std::iterator<std::forward_iterator_tag, 
 public:
     using iterator_type = typename T::const_iterator;
 
-    dual_container_iterator() : current{}, end1{}, end2{} {}
+    dual_container_iterator() : current{}, end1{}, begin2{}, end2{}  {}
 
     dual_container_iterator(iterator_type begin1, iterator_type end1, iterator_type begin2, iterator_type end2)
-            : current(begin1 != end1 ? begin1 : begin2), end1(end1), end2(end2), begin2(begin2) {}
+            : current(begin1 != end1 ? begin1 : begin2), end1(end1), begin2(begin2), end2(end2) {}
 
     dual_container_iterator([[maybe_unused]] iterator_type begin1, iterator_type end1, iterator_type begin2, iterator_type end2, iterator_type current)
-            : current(current), end1(end1), end2(end2), begin2(begin2) {}
+            : current(current), end1(end1), begin2(begin2), end2(end2) {}
 
     dual_container_iterator& operator++() {
         auto next = std::next(current);
@@ -136,8 +136,8 @@ public:
 
 private:
     iterator_type current;
-    iterator_type begin2;
     iterator_type end1;
+    iterator_type begin2;
     iterator_type end2;
 };
 
