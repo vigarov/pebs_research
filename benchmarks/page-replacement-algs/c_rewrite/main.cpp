@@ -187,7 +187,7 @@ namespace page_cache_algs {
     std::string alg_to_name(type t){return get_alg(t)->name();}
 }
 
-typedef std::pair<page_cache_algs::type,double> compared_t;
+typedef std::pair<const page_cache_algs::type,double> compared_t;
 typedef std::pair<compared_t,compared_t> comparison_t;
 
 
@@ -233,6 +233,8 @@ struct AddStandaloneInfo{
     std::string ptchange_dir;
     std::shared_ptr<temp_log_t> ptchanges{};
     uint64_t n_pfaults = 0, curr_pfault_distance_sum = 0, curr_non_pfault_distance_sum = 0;
+    temp_t previous_sum = 1;
+    bool emplaced_previously = true;
     std::optional<std::shared_ptr<nd_t>> necessary_data{};
 };
 
@@ -242,7 +244,7 @@ struct AlgInThread{
     uint8_t changed = true;
     const consideration_method considerationMethod;
     std::optional<AddStandaloneInfo> asi{};
-    ThreadWorkAlgs twa;
+    const ThreadWorkAlgs twa;
 };
 
 namespace consideration_methods{
@@ -294,62 +296,34 @@ static const std::string OTHER_DATA_FN = "stats.csv";
 static constexpr char SEPARATOR = ',';
 
 
-static temp_t overall_distance(const GenericAlgorithm& compared, page_cache_algs::type compared_type, const GenericAlgorithm& baseline){
+template<typename T>
+static typename std::enable_if<std::is_base_of<GenericAlgorithm,T>::value,temp_t>::type overall_distance_(const GenericAlgorithm& compared, const GenericAlgorithm& baseline){
     temp_t sum = 0;
+    auto baseline_iterable = dynamic_cast<const T&>(baseline).get_cache_iterable();
+    for (const auto &page: *baseline_iterable) {
+        auto baseline_temp = baseline.get_temperature(page,std::nullopt);
+        temp_t compared_temp = 0;
+        if (!compared.is_page_fault(page)) {
+            compared_temp = compared.get_temperature(page,std::nullopt);
+        }
+        sum += std::abs(static_cast<long long>(baseline_temp) - static_cast<long long>(compared_temp));
+    }
+    return sum;
+}
 
-    switch (compared_type) {
-        case page_cache_algs::LRU_t:{
-            auto compared_iterable = dynamic_cast<const LRU_K &>(compared).get_cache_iterable();
-            for (const auto &page: *compared_iterable) {
-                auto baseline_temp = baseline.get_temperature(page,std::nullopt);
-                temp_t compared_temp = 0;
-                if (!baseline.is_page_fault(page)) {
-                    compared_temp = compared.get_temperature(page,std::nullopt);
-                }
-                sum += std::abs(static_cast<long long>(baseline_temp) - static_cast<long long>(compared_temp));
-            }
-            break;
-        }
-        case page_cache_algs::GCLOCK_t:{
-            auto compared_iterable = dynamic_cast<const CLOCK &>(compared).get_cache_iterable();
-            for (const auto &page: *compared_iterable) {
-                auto baseline_temp = baseline.get_temperature(page,std::nullopt);
-                temp_t compared_temp = 0;
-                if (!baseline.is_page_fault(page)) {
-                    compared_temp = compared.get_temperature(page,std::nullopt);
-                }
-                sum += std::abs(static_cast<long long>(baseline_temp) - static_cast<long long>(compared_temp));
-            }
-            break;
-        }
-        case page_cache_algs::ARC_t:{
-            auto compared_iterable = dynamic_cast<const ARC &>(compared).get_cache_iterable();
-            for (auto &page : *compared_iterable) {
-                auto baseline_temp = baseline.get_temperature(page,std::nullopt);
-                temp_t compared_temp = 0;
-                if (!baseline.is_page_fault(page)) {
-                    compared_temp = compared.get_temperature(page,std::nullopt);
-                }
-                sum += std::abs(static_cast<long long>(baseline_temp) - static_cast<long long>(compared_temp));
-            }
-            break;
-        }
-        case page_cache_algs::CAR_t:{
-            auto compared_iterable = dynamic_cast<const CAR &>(compared).get_cache_iterable();
-            for (auto &page: *compared_iterable) {
-                auto baseline_temp = baseline.get_temperature(page,std::nullopt);
-                temp_t compared_temp = 0;
-                if (!baseline.is_page_fault(page)) {
-                    compared_temp = compared.get_temperature(page,std::nullopt);
-                }
-                sum += std::abs(static_cast<long long>(baseline_temp) - static_cast<long long>(compared_temp));
-            }
-            break;
-        }
+static temp_t overall_distance(const GenericAlgorithm& compared, const GenericAlgorithm& baseline, page_cache_algs::type baseline_type){
+    switch(baseline_type){
+        case page_cache_algs::LRU_t:
+            return overall_distance_<LRU_K>(compared,baseline);
+        case page_cache_algs::GCLOCK_t:
+            return overall_distance_<CLOCK>(compared,baseline);
+        case page_cache_algs::ARC_t:
+            return overall_distance_<ARC>(compared,baseline);
+        case page_cache_algs::CAR_t:
+            return overall_distance_<CAR>(compared,baseline);
         default:
             exit(-1);
     }
-    return sum;
 }
 
 
@@ -429,23 +403,38 @@ static void comparison_and_standalone(std::barrier<>& it_barrier, std::string co
                     }
                     alg.changed = alg.alg->consume(page_base);
                     //if(pfault && !alg.changed) std::cerr << alg.changed << " " << pfault << "Doesn't match!!" << std::endl;
-                    if(alg.changed && alg.asi!=std::nullopt){
-                        if(alg.asi->necessary_data!=std::nullopt){
-                            auto md = alg.alg->compare_to_previous(*alg.asi->necessary_data);
+                    auto alg_asi = alg.asi;
+                    if(alg_asi != std::nullopt){
+                        temp_t md = 0;
+                        if(alg.changed && alg_asi->necessary_data != std::nullopt){
+                            md = alg.alg->compare_to_previous(*alg_asi->necessary_data);
                             if (pfault) {
-                                alg.asi->n_pfaults++;
-                                alg.asi->curr_pfault_distance_sum += md;
+                                alg_asi->n_pfaults++;
+                                alg_asi->curr_pfault_distance_sum += md;
                             } else {
-                                alg.asi->curr_non_pfault_distance_sum += md;
+                                alg_asi->curr_non_pfault_distance_sum += md;
                             }
-                            alg.asi->ptchanges->push_back({seen,md});
+                            alg_asi->ptchanges->emplace_back(seen, md);
                         }
-                        alg.asi->necessary_data = alg.alg->get_necessary_data();
+                        else{
+                            md = 0;
+                        }
+
+                        if(md != alg_asi->previous_sum){
+                            if(!alg_asi->emplaced_previously) alg_asi->ptchanges->emplace_back(seen-1, alg_asi->previous_sum);
+                            alg_asi->ptchanges->emplace_back(seen, md);
+                            alg_asi->previous_sum = md;
+                            alg_asi->emplaced_previously = true;
+                        }
+                        else{
+                            alg_asi->emplaced_previously = false;
+                        }
+                        alg_asi->necessary_data = alg.alg->get_necessary_data();
                     }
                 }
             }
             if(alg_arr[0].changed || alg_arr[1].changed){
-                change_diffs->emplace_back(seen, overall_distance(*alg_arr[0].alg,alg_arr[0].twa.alg_info.first,*alg_arr[1].alg));
+                change_diffs->emplace_back(seen, overall_distance(*alg_arr[0].alg,*alg_arr[1].alg,alg_arr[1].twa.alg_info.first));
             }
         }
 
@@ -654,7 +643,7 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
     }
 
 // 2)
-    for (int i = 0; i < page_cache_algs::all.size(); i += 2) {
+    for (size_t i = 0; i < page_cache_algs::all.size(); i += 2) {
         auto alg1 = page_cache_algs::all[i];
         auto alg2 = page_cache_algs::all[i + 1];
         for (auto& div : samples_div) {
@@ -665,7 +654,7 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
     }
 
 // 3)
-    for (int i = 0; i < 2; i++) {
+    for (size_t i = 0; i < 2; i++) {
         auto alg1 = page_cache_algs::all[i];
         auto alg2 = page_cache_algs::all[i + 2];
         for (auto& div : samples_div) {
@@ -693,7 +682,7 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
 
     //Setup shared Synchronisation and Memory
     num_ready = num_comp_processes;
-    std::barrier it_barrier(num_comp_processes);
+    std::barrier it_barrier(static_cast<long>(num_comp_processes));
 
     std::vector<std::jthread> all_threads{};
     all_threads.reserve(num_comp_processes);
@@ -713,7 +702,7 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
         t2.standalone_save_dir = standalone_2.second;
         auto comp_save_dir_path_u = fs::path(comp_dir_as_posix+USERSPACE_PREFIX+get_alg_div_name(comparison.first)+"_vs_"+get_alg_div_name(comparison.second));
         fs::create_directories(comp_save_dir_path_u);
-        all_threads.emplace_back(comparison_and_standalone,std::ref(it_barrier),fs::absolute(comp_save_dir_path_u).lexically_normal().string(),thread_arg_t({t1,t2}));
+        all_threads.emplace_back(comparison_and_standalone,std::ref(it_barrier),fs::absolute(comp_save_dir_path_u).lexically_normal().string()+'/',thread_arg_t({t1,t2}));
     }
     for(auto& comparison : ratio_comparisons){
         auto do_standalone_1 = do_standalone(standalone_dir_as_posix,done_standalone, comparison.first.first,indexof(samples_div.begin(),samples_div.end(), comparison.first.second),comparison.first.second,samples_div.size());
@@ -723,13 +712,13 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
         ThreadWorkAlgs t2{comparison.second, standalone_2.first, -1};
         auto comp_save_dir_path_k = fs::path(comp_dir_as_posix+KERNEL_PREFIX+get_alg_div_name(comparison.first)+"_vs_"+get_alg_div_name(comparison.second));
         fs::create_directories(comp_save_dir_path_k);
-        all_threads.emplace_back(comparison_and_standalone,std::ref(it_barrier),fs::absolute(comp_save_dir_path_k).lexically_normal().string(),thread_arg_t({t1,t2}));
+        all_threads.emplace_back(comparison_and_standalone,std::ref(it_barrier),fs::absolute(comp_save_dir_path_k).lexically_normal().string()+'/',thread_arg_t({t1,t2}));
         t1.is_userspace = t2.is_userspace = 1;
         t1.standalone_save_dir = do_standalone_1.second;
         t2.standalone_save_dir = standalone_2.second;
         auto comp_save_dir_path_u = fs::path(comp_dir_as_posix+USERSPACE_PREFIX+get_alg_div_name(comparison.first)+"_vs_"+get_alg_div_name(comparison.second));
         fs::create_directories(comp_save_dir_path_u);
-        all_threads.emplace_back(comparison_and_standalone,std::ref(it_barrier),fs::absolute(comp_save_dir_path_u).lexically_normal().string(),thread_arg_t({t1,t2}));
+        all_threads.emplace_back(comparison_and_standalone,std::ref(it_barrier),fs::absolute(comp_save_dir_path_u).lexically_normal().string()+'/',thread_arg_t({t1,t2}));
     }
 
     std::jthread reader(reader_thread,args.mem_trace_path);
