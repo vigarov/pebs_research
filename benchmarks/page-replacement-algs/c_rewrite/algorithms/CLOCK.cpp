@@ -7,16 +7,19 @@
 bool CLOCK::consume(page_t page_start){
     auto page_fault = is_page_fault(page_start);
     auto& page_data = page_to_data[page_start];
+    redundant_pfault = false;
+    known_value = 0;
     if(page_fault){
         if(page_cache.size() == page_cache_size){
             find_victim();
             page_to_data.erase(page_cache[head]);
             page_cache[page_data.index = head] = page_start;
-            //advance_head();
+            advance_head();
         }
         else{
             page_data.index = page_cache.size();
             page_cache.push_back(page_start);
+            redundant_pfault = true;
         }
     }
     bool const changed = page_data.counter!=i;
@@ -48,7 +51,7 @@ void CLOCK::update_page_counter_and_relevant_indices(CLOCK_page_data& page_data)
     }
 }
 
-temp_t CLOCK::compare_to_previous(std::shared_ptr<nd_t> prev_nd) {
+temp_t CLOCK::compare_to_previous_internal(std::shared_ptr<nd_t> prev_nd) {
     temp_t sum = 0;
     auto& prevptd = std::get<CLOCK_temp_necessary_data>(*prev_nd).prev_page_to_data;
     for(const auto& page: page_cache){

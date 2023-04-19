@@ -33,7 +33,7 @@ public:
     inline bool is_page_fault(page_t page) const  override {return !page_to_data.contains(page) || page_to_data.at(page).in_list == B1 || page_to_data.at(page).in_list == B2;};
     std::string name() override {return "ARC";};
     std::unique_ptr<page_cache_copy_t> get_page_cache_copy() override;
-    temp_t compare_to_previous(std::shared_ptr<nd_t> prev_nd) override;
+    temp_t compare_to_previous_internal(std::shared_ptr<nd_t> prev_nd) override;
     const dual_container_range<arc_cache_t>* get_cache_iterable() const {return &dcr;}
 private:
     std::string cache_to_string(size_t num_elements) override{
@@ -41,7 +41,7 @@ private:
         long long num_left_elements = static_cast<long>(num_elements);
         for (int i = T1; i <= T2 && num_left_elements>0; ++i) {
             auto& relevant_cache = caches.at(i);
-            if(i == T2 && num_left_elements>relevant_cache.size()) num_left_elements = static_cast<long>(relevant_cache.size());
+            if(i == T2 && num_left_elements>static_cast<long long>(relevant_cache.size())) num_left_elements = static_cast<long>(relevant_cache.size());
             ret += std::to_string(i)+": ";
             std::string cache_answ("[");
             cache_answ += page_iterable_to_str(relevant_cache.begin(),num_left_elements,relevant_cache.end());

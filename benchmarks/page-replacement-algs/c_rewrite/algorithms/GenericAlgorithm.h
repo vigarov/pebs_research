@@ -7,6 +7,7 @@
 #include <iterator>
 #include <functional>
 #include <deque>
+#include <utility>
 #include <vector>
 #include <memory>
 #include <list>
@@ -46,7 +47,7 @@ struct LRU_temp_necessary_data{
 typedef std::deque<page_t> gclock_cache_t;
 
 struct CLOCK_page_data{
-    size_t relative_index=0;
+    size_t relative_index=0; // Distance from head w.r.t current `counter` group ; counter group = (ordered) set of all pages in cache with the same counter
     size_t index=0;
     uint8_t counter = 0;
 };
@@ -176,8 +177,13 @@ public:
     virtual std::string name() = 0;
     virtual std::string toString() {return name() + " : cache = " +cache_to_string(10);};
     virtual std::unique_ptr<page_cache_copy_t> get_page_cache_copy() = 0;
-    virtual temp_t compare_to_previous(std::shared_ptr<nd_t> prev_nd) = 0;
     virtual ~GenericAlgorithm() = default;
+    virtual temp_t compare_to_previous(std::shared_ptr<nd_t> prev_nd){
+        if (redundant_pfault)
+            return known_value;
+        else
+            return compare_to_previous_internal(std::move(prev_nd));
+    }
 protected:
     virtual std::string cache_to_string(size_t num_elements) = 0;
     template<typename Iterator>
@@ -192,4 +198,7 @@ protected:
         return oss.str();
     };
     size_t page_cache_size;
+    virtual temp_t compare_to_previous_internal(std::shared_ptr<nd_t> prev_nd) = 0;
+    bool redundant_pfault = false;
+    temp_t known_value = 0;
 };

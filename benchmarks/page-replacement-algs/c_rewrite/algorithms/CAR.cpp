@@ -8,6 +8,8 @@ bool CAR::consume(page_t page_start) {
     bool changed = true;
     auto& page_data = page_to_data[page_start];
     auto in_cache = (page_data.in_list == T1 || page_data.in_list == T2);
+    redundant_pfault = false;
+    known_value = 0;
     if (in_cache){
         if(!page_data.referenced) {
             update_relative_indices(page_data); // TODO comment out this line
@@ -116,7 +118,7 @@ std::unique_ptr<page_cache_copy_t> CAR::get_page_cache_copy() {
     return std::make_unique<page_cache_copy_t>(concatenated_list);
 }
 
-temp_t CAR::compare_to_previous(std::shared_ptr<nd_t> prev_nd) {
+temp_t CAR::compare_to_previous_internal(std::shared_ptr<nd_t> prev_nd) {
     temp_t sum = 0;
     auto& prevptd = std::get<CAR_temp_necessary_data>(*prev_nd).prev_page_to_data;
     for(const auto& page: caches[T1]){

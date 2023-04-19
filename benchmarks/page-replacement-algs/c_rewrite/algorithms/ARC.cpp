@@ -4,6 +4,8 @@ bool ARC::consume(page_t page_start) {
     auto& page_data = page_to_data[page_start];
     auto in_cache = (page_data.in_list == T1 || page_data.in_list == T2);
     const bool not_changed = page_data.in_list==T2 && (std::next(page_data.at_iterator) == caches[T2].end());
+    redundant_pfault = false;
+    known_value = 0;
     if (in_cache){
         remove_from_cache_and_update_indices(page_data.in_list,page_data.at_iterator); // TODO caches[page_data.in_list].erase(page_data.at_iterator);
         page_data.index = caches[T2].size();
@@ -99,7 +101,7 @@ std::unique_ptr<page_cache_copy_t> ARC::get_page_cache_copy() {
     return std::make_unique<page_cache_copy_t>(concatenated_list);
 }
 
-temp_t ARC::compare_to_previous(std::shared_ptr<nd_t> prev_nd) {
+temp_t ARC::compare_to_previous_internal(std::shared_ptr<nd_t> prev_nd) {
     temp_t sum = 0;
     auto& prevptd = std::get<ARC_temp_necessary_data>(*prev_nd).prev_page_to_data;
     for(const auto& page: caches[T1]){
