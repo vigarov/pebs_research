@@ -25,9 +25,11 @@ namespace fs = std::filesystem;
 
 static constexpr uint8_t K = 2;
 static constexpr size_t MAX_PAGE_CACHE_SIZE = 507569; // pages = `$ ulimit -l`/4  ~= 2GB mem
-static constexpr size_t page_cache_size = 32*1024; // ~ 64 KB mem
+static constexpr size_t page_cache_size = 32*1024; // ~ 128 KB mem
 static constexpr size_t LINE_SIZE_BYTES = 16; // "W0x7fffffffd9a8\n"*1 (===sizeof(char))
 
+static const size_t max_num_threads = std::thread::hardware_concurrency();
+static const size_t num_array_comp_threads = (max_num_threads > 16 ? max_num_threads/4 : 2);
 
 std::string dtos(double f, uint8_t nd) {
     std::ostringstream ostr;
@@ -173,13 +175,13 @@ namespace page_cache_algs {
     std::unique_ptr<GenericAlgorithm> get_alg(type t){
         switch(t){
             case LRU_t:
-                return std::make_unique<LRU_K>(page_cache_size,K);
+                return std::make_unique<LRU_K>(page_cache_size,K,num_array_comp_threads);
             case GCLOCK_t:
-                return std::make_unique<CLOCK>(page_cache_size,K);
+                return std::make_unique<CLOCK>(page_cache_size,K,num_array_comp_threads);
             case ARC_t:
-                return std::make_unique<ARC>(page_cache_size);
+                return std::make_unique<ARC>(page_cache_size,num_array_comp_threads);
             case CAR_t:
-                return std::make_unique<CAR>(page_cache_size);
+                return std::make_unique<CAR>(page_cache_size,num_array_comp_threads);
             default:
                 return nullptr;
         }
@@ -343,8 +345,8 @@ static void comparison_and_standalone(std::barrier<>& it_barrier, std::string co
     size_t n_writes = 0,seen = 0;
     //Create algs
 
-    AlgInThread ait1 = {.alg=std::move(page_cache_algs::get_alg(twas.first.alg_info.first)),.considerationMethod=consideration_methods::get_consideration_method(twas.first.is_userspace,twas.first.ratio>0),.twa=std::move(twas.first)};
-    AlgInThread ait2 = {.alg=std::move(page_cache_algs::get_alg(twas.second.alg_info.first)),.considerationMethod=consideration_methods::get_consideration_method(twas.second.is_userspace,twas.second.ratio>0),.twa=std::move(twas.second)};
+    AlgInThread ait1 = {.alg=page_cache_algs::get_alg(twas.first.alg_info.first),.considerationMethod=consideration_methods::get_consideration_method(twas.first.is_userspace,twas.first.ratio>0),.twa=std::move(twas.first)};
+    AlgInThread ait2 = {.alg=page_cache_algs::get_alg(twas.second.alg_info.first),.considerationMethod=consideration_methods::get_consideration_method(twas.second.is_userspace,twas.second.ratio>0),.twa=std::move(twas.second)};
     {
         std::string alg_dir;
         if ((alg_dir=ait1.twa.standalone_save_dir) != NO_STANDALONE || (alg_dir=ait2.twa.standalone_save_dir) != NO_STANDALONE) {
@@ -403,7 +405,7 @@ static void comparison_and_standalone(std::barrier<>& it_barrier, std::string co
                     }
                     alg.changed = alg.alg->consume(page_base);
                     //if(pfault && !alg.changed) std::cerr << alg.changed << " " << pfault << "Doesn't match!!" << std::endl;
-                    auto alg_asi = alg.asi;
+                    auto& alg_asi = alg.asi;
                     if(alg_asi != std::nullopt){
                         temp_t md = 0;
                         if(alg.changed && alg_asi->necessary_data != std::nullopt){

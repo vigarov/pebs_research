@@ -7,12 +7,13 @@
 bool CAR::consume(page_t page_start) {
     bool changed = true;
     auto& page_data = page_to_data[page_start];
+    auto& page_data_internal = page_to_data_internal[page_start];
     auto in_cache = (page_data.in_list == T1 || page_data.in_list == T2);
     redundant_pfault = false;
     known_value = 0;
     if (in_cache){
         if(!page_data.referenced) {
-            update_relative_indices(page_data); // TODO comment out this line
+            update_relative_indices(page_data,page_data_internal); // TODO comment out this line
             page_data.relative_index = caches[page_data.in_list].size()-(num_unreferenced[page_data.in_list]--);
             page_data.referenced = true;
         }
@@ -39,7 +40,7 @@ bool CAR::consume(page_t page_start) {
         }
         if(page_data.in_list != B1 && page_data.in_list != B2){
             //History Miss
-            page_data.at_iterator = caches[T1].insert(caches[T1].end(),page_start);
+            page_data_internal.at_iterator = caches[T1].insert(caches[T1].end(),page_start);
             page_data.in_list = T1;
             page_data.relative_index = num_unreferenced[T1]++;
         }
@@ -51,8 +52,8 @@ bool CAR::consume(page_t page_start) {
             else{
                 p = std::max(p - std::max(1., static_cast<double>(caches[B1].size()) / static_cast<double>(caches[B2].size()) ), 0.);
             }
-            caches.at(page_data.in_list).erase(page_data.at_iterator);
-            page_data.at_iterator = caches[T2].insert(caches[T2].end(),page_start);
+            caches.at(page_data.in_list).erase(page_data_internal.at_iterator);
+            page_data_internal.at_iterator = caches[T2].insert(caches[T2].end(),page_start);
             page_data.in_list = T2;
             page_data.relative_index = num_unreferenced[T2]++;
         }
@@ -60,8 +61,8 @@ bool CAR::consume(page_t page_start) {
     return changed;
 }
 
-void CAR::update_relative_indices(const CAR_page_data& data) {
-    auto start = std::next(data.at_iterator);
+void CAR::update_relative_indices(const CAR_page_data& data, const CAR_page_data_internal& data_internal) {
+    auto start = std::next(data_internal.at_iterator);
     std::for_each(start, caches[data.in_list].end(), [&](const auto &page) {
         auto &maybe_modify_data = page_to_data[page];
         if (maybe_modify_data.referenced == data.referenced) maybe_modify_data.relative_index--;
@@ -74,16 +75,17 @@ void CAR::replace() {
         if(caches[T1].size() >= static_cast<size_t>(std::max(1., p))){
             // T1 is oversized
             auto& t1_head_data = page_to_data[caches[T1].front()];
-            auto t1_head = *t1_head_data.at_iterator;
-            update_relative_indices(t1_head_data); // TODO comment out this line
+            auto& t1_head_data_internal = page_to_data_internal[caches[T1].front()];
+            auto t1_head = *t1_head_data_internal.at_iterator;
+            update_relative_indices(t1_head_data,t1_head_data_internal); // TODO comment out this line
             if(!t1_head_data.referenced){
-                t1_head_data.at_iterator = caches[B1].insert(caches[B1].end(),t1_head);
+                t1_head_data_internal.at_iterator = caches[B1].insert(caches[B1].end(),t1_head);
                 t1_head_data.in_list = B1;
                 num_unreferenced[T1]--;
                 found = true;
             }else{
                 t1_head_data.referenced = false;
-                t1_head_data.at_iterator = caches[T2].insert(caches[T2].end(),t1_head);
+                t1_head_data_internal.at_iterator = caches[T2].insert(caches[T2].end(),t1_head);
                 t1_head_data.in_list = T2;
                 t1_head_data.relative_index = num_unreferenced[T2]++;
             }
@@ -91,16 +93,17 @@ void CAR::replace() {
         }else{
             // T2 is oversized
             auto& t2_head_data = page_to_data[caches[T2].front()];
-            auto t2_head = *t2_head_data.at_iterator;
-            update_relative_indices(t2_head_data); // TODO comment out this line
+            auto& t2_head_data_internal = page_to_data_internal[caches[T2].front()];
+            auto t2_head = *t2_head_data_internal.at_iterator;
+            update_relative_indices(t2_head_data,t2_head_data_internal); // TODO comment out this line
             if(!t2_head_data.referenced){
-                t2_head_data.at_iterator = caches[B2].insert(caches[B2].end(),t2_head);
+                t2_head_data_internal.at_iterator = caches[B2].insert(caches[B2].end(),t2_head);
                 t2_head_data.in_list = B2;
                 num_unreferenced[T2]--;
                 found = true;
             }else{
                 t2_head_data.referenced = false;
-                t2_head_data.at_iterator = caches[T2].insert(caches[T2].end(),t2_head);
+                t2_head_data_internal.at_iterator = caches[T2].insert(caches[T2].end(),t2_head);
                 t2_head_data.in_list = T2;
                 t2_head_data.relative_index = num_unreferenced[T2]++;
             }

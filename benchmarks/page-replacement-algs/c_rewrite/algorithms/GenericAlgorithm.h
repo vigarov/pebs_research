@@ -17,7 +17,7 @@
 typedef uint64_t ptr_t;
 typedef ptr_t page_t;
 
-typedef size_t temp_t;
+typedef uint32_t temp_t;
 
 static constexpr uint16_t PAGE_SIZE = 4096;
 
@@ -34,27 +34,36 @@ typedef std::list<page_t> lru_cache_t;
 
 struct LRU_page_data{
     size_t index=0;
+};
+
+//typedef std::list<lru_cache_t::const_iterator> lru_iterator_list;
+
+struct LRU_page_data_internal{
     std::deque<uint64_t> history;
     lru_cache_t::iterator at_iterator;
-    LRU_page_data(): LRU_page_data(2) {}
-    explicit LRU_page_data(uint8_t K) : history(K){}
+    //std::optional<lru_iterator_list::iterator> is_some_start_iterator;
+    LRU_page_data_internal(): LRU_page_data_internal(2) {}
+    explicit LRU_page_data_internal(uint8_t K) : history(K){}
 };
 
 struct LRU_temp_necessary_data{
-    std::unordered_map<page_t,LRU_page_data> prev_page_to_data;
+    const std::unordered_map<page_t,LRU_page_data> prev_page_to_data;
 };
 
 typedef std::deque<page_t> gclock_cache_t;
 
 struct CLOCK_page_data{
     size_t relative_index=0; // Distance from head w.r.t current `counter` group ; counter group = (ordered) set of all pages in cache with the same counter
-    size_t index=0;
     uint8_t counter = 0;
 };
 
+struct CLOCK_page_data_internal{
+    size_t index = 0;
+};
+
 struct CLOCK_temp_necessary_data{
-    std::unordered_map<page_t,CLOCK_page_data> prev_page_to_data;
-    std::vector<page_t> prev_num_count_i;
+    const std::unordered_map<page_t,CLOCK_page_data> prev_page_to_data;
+    const std::vector<temp_t> prev_deltas;
 };
 
 typedef std::list<page_t> car_cache_t;
@@ -63,13 +72,16 @@ struct CAR_page_data{
     size_t relative_index=0;
     uint8_t referenced = 0;
     cache_list_idx in_list = NUM_CACHES;
+};
+
+struct CAR_page_data_internal {
     car_cache_t::iterator at_iterator;
 };
 
 struct CAR_temp_necessary_data{
-    std::unordered_map<page_t,CAR_page_data> prev_page_to_data;
-    std::array<size_t,2> prev_num_unreferenced;
-    size_t prev_t1_cs;
+    const std::unordered_map<page_t,CAR_page_data> prev_page_to_data;
+    const std::array<size_t,2> prev_num_unreferenced;
+    const size_t prev_t1_cs;
 };
 
 typedef std::list<page_t> arc_cache_t;
@@ -77,12 +89,15 @@ typedef std::list<page_t> arc_cache_t;
 struct ARC_page_data{
     size_t index=0;
     cache_list_idx in_list = NUM_CACHES;
+};
+
+struct ARC_page_data_internal{
     arc_cache_t::iterator at_iterator;
 };
 
 struct ARC_temp_necessary_data{
-    std::unordered_map<page_t,ARC_page_data> prev_page_to_data;
-    size_t prev_T1_cache_size;
+    const std::unordered_map<page_t,ARC_page_data> prev_page_to_data;
+    const size_t prev_T1_cache_size;
 };
 
 
@@ -169,7 +184,7 @@ private:
 
 class GenericAlgorithm{
 public:
-    explicit GenericAlgorithm(size_t page_cache_size) : page_cache_size(page_cache_size) {};
+    explicit GenericAlgorithm(size_t page_cache_size,size_t num_threads) : page_cache_size(page_cache_size),period(page_cache_size/num_threads) {};
     virtual bool consume(page_t page_start) = 0;
     [[nodiscard]] virtual temp_t get_temperature(page_t page,std::optional<std::shared_ptr<nd_t>> necessary_data) const = 0;
     virtual std::unique_ptr<nd_t> get_necessary_data() = 0;
@@ -201,4 +216,5 @@ protected:
     virtual temp_t compare_to_previous_internal(std::shared_ptr<nd_t> prev_nd) = 0;
     bool redundant_pfault = false;
     temp_t known_value = 0;
+    const size_t period;
 };

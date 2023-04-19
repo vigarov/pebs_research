@@ -9,7 +9,7 @@
 
 class CAR : public GenericAlgorithm{
 public:
-    explicit CAR(uint16_t page_cache_size) : GenericAlgorithm(page_cache_size){};
+    explicit CAR(uint16_t page_cache_size,size_t num_threads) : GenericAlgorithm(page_cache_size,num_threads){};
     bool consume(page_t page_start) override;
     temp_t get_temperature(page_t page,std::optional<std::shared_ptr<nd_t>> necessary_data) const  override {
         if (necessary_data == std::nullopt) {
@@ -46,6 +46,10 @@ public:
     std::unique_ptr<page_cache_copy_t> get_page_cache_copy() override;
     temp_t compare_to_previous_internal(std::shared_ptr<nd_t> prev_nd) override;
     const dual_container_range<car_cache_t>* get_cache_iterable() const {return &dcr;}
+    std::optional<std::pair<dual_container_iterator<car_cache_t>,dual_container_iterator<car_cache_t>>> get_nth_iterator_pair(size_t n){
+        if((n+1)>=iterators.size()) return std::nullopt;
+        return std::pair(*std::next(iterators.cbegin(),static_cast<long>(n)),*std::next(iterators.cbegin(),static_cast<long>(n+1)));
+    }
 private:
     std::string cache_to_string(size_t num_elements) override{
         std::string ret;
@@ -64,12 +68,15 @@ private:
     };
     std::array<car_cache_t,NUM_CACHES> caches{}; // idx 0 = LRU; idx size-1 = MRU ; tentative for L1, L2 (=== 0 = head, size-1 = tail)
     std::unordered_map<page_t,CAR_page_data> page_to_data;
+    std::unordered_map<page_t,CAR_page_data_internal> page_to_data_internal;
     double p = 0.;
     std::array<size_t,2> num_unreferenced{};
     void replace();
     dual_container_range<car_cache_t> dcr{caches[T1],caches[T2]};
 
-    void update_relative_indices(const CAR_page_data& data);
+    void update_relative_indices(const CAR_page_data& data,const CAR_page_data_internal& data_internal);
+
+    std::list<dual_container_iterator<car_cache_t>> iterators = {dcr.end()};
 };
 
 

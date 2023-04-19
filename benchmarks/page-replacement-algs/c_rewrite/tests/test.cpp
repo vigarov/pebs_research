@@ -19,16 +19,18 @@
 #include <zlib.h>
 
 
+#define TEST_NUM_THREADS 2 
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 static void test_ma_small(){
     int K = 2;
     int page_cache_size = 3; // ~128 KB mem
     std::vector<GenericAlgorithm*> const my_algs = {
-            new LRU_K(page_cache_size, K),
-            new CLOCK(page_cache_size, K),
-            new ARC(page_cache_size),
-            new CAR(page_cache_size)
+            new LRU_K(page_cache_size, K,TEST_NUM_THREADS),
+            new CLOCK(page_cache_size, K,TEST_NUM_THREADS),
+            new ARC(page_cache_size,TEST_NUM_THREADS),
+            new CAR(page_cache_size,TEST_NUM_THREADS)
     };
 
     std::vector<std::string> const test_accesses = {"W0x7fffffffd9a8", "W0x7fffffffd980", "W0x7ffff7ffde0e", "W0x7ffff7ffdb78",
@@ -57,10 +59,10 @@ static void test_ma_diverse(){
     int K = 2;
     int page_cache_size = 3; // ~128 KB mem
     std::vector<GenericAlgorithm*> const my_algs = {
-            new LRU_K(page_cache_size, K),
-            new CLOCK(page_cache_size, K),
-            new ARC(page_cache_size),
-            new CAR(page_cache_size)
+            new LRU_K(page_cache_size, K,TEST_NUM_THREADS),
+            new CLOCK(page_cache_size, K,TEST_NUM_THREADS),
+            new ARC(page_cache_size,TEST_NUM_THREADS),
+            new CAR(page_cache_size,TEST_NUM_THREADS)
     };
 
     std::vector<std::string> const test_accesses = {
@@ -91,10 +93,10 @@ static void test_ma_med(){
     int K = 2;
     int page_cache_size = 3; // ~128 KB mem
     std::vector<GenericAlgorithm*> const my_algs = {
-            new LRU_K(page_cache_size, K),
-            new CLOCK(page_cache_size, K),
-            new ARC(page_cache_size),
-            new CAR(page_cache_size)
+            new LRU_K(page_cache_size, K,TEST_NUM_THREADS),
+            new CLOCK(page_cache_size, K,TEST_NUM_THREADS),
+            new ARC(page_cache_size,TEST_NUM_THREADS),
+            new CAR(page_cache_size,TEST_NUM_THREADS)
     };
 
     std::vector<std::string> const test_accesses = {
@@ -181,10 +183,10 @@ perf_separator_test2(bm, page_start);
 static void test_fuzz(){
     auto actual_size = 8*1024;
     std::vector<GenericAlgorithm*> const my_algs = {
-            new LRU_K(actual_size, 2),
-            new CLOCK(actual_size, 2),
-            new ARC(actual_size),
-            new CAR(actual_size)
+            new LRU_K(actual_size, 2, TEST_NUM_THREADS),
+            new CLOCK(actual_size, 2, TEST_NUM_THREADS),
+            new ARC(actual_size, TEST_NUM_THREADS),
+            new CAR(actual_size, TEST_NUM_THREADS)
     };
 
     unsigned long long smth = 0;
@@ -236,7 +238,8 @@ namespace test {
             count_stamp += 1;
             auto page_fault = is_page_fault(page_start);
             auto &page_data = page_to_data[page_start];
-            auto &histories = page_data.history;
+            auto &page_data_internal = page_to_data_internal[page_start];
+            auto &histories = page_data_internal.history;
             //For K!=2, if(histories.size() != K) {/*set K empty elements*/}
             histories.pop_back();
             histories.push_front(count_stamp);
@@ -244,31 +247,32 @@ namespace test {
                 if (page_cache.size() == page_cache_size) { //Full, must replace
                     auto victim_page_it = std::prev(page_cache.end());
                     page_to_data.erase(*victim_page_it);
+                    page_to_data_internal.erase(*victim_page_it);
                     page_cache.erase(victim_page_it);
                 }
                 page_data.index = page_cache.size();
-                page_data.at_iterator = page_cache.insert(page_cache.end(), page_start);
+                page_data_internal.at_iterator = page_cache.insert(page_cache.end(), page_start);
                 //Keeps sort since page_fault --> not in history --> K-1 = 0 == min
             } else { //page in cache
                 //Keep the page cache sorted; page_data[K-1] must be compared to all subsequent page_data[K-1]
-                auto it = page_data.at_iterator;
+                auto it = page_data_internal.at_iterator;
                 if (it != page_cache.begin()) {
                     auto page_before = std::prev(page_cache.erase(it));
                     while (page_before != page_cache.begin() &&
-                           page_to_data[*page_before].history[2 - 1] < histories[2 - 1]) {
+                            page_to_data_internal[*page_before].history[2 - 1] < histories[2 - 1]) {
                         page_to_data[*page_before].index++;
                         page_before = std::prev(page_before);
                         page_data.index--;
                     }
                     if (page_before != page_cache.begin() ||
-                        /*page_before == page_cache.begin()*/ page_to_data[*page_before].history[2 - 1] >
+                        /*page_before == page_cache.begin()*/ page_to_data_internal[*page_before].history[2 - 1] >
                                                               histories[2 - 1]) {
                         page_before = std::next(page_before);
                     } else {//: we're at begin AND begin is smaller than us --> we must insert at the beginning, aka before begin
                         page_to_data[*page_before].index++;
                         page_data.index--;
                     }
-                    page_data.at_iterator = page_cache.insert(page_before, page_start);
+                    page_data_internal.at_iterator = page_cache.insert(page_before, page_start);
                 } else {
                     changed = false;
                 }
@@ -310,6 +314,7 @@ namespace test {
 
         lru_cache_t page_cache{}; // idx 0 = MRU; idx size-1 = LRU, sorted by second history
         boost::unordered_flat_map<page_t, LRU_page_data> page_to_data;
+        boost::unordered_flat_map<page_t,LRU_page_data_internal> page_to_data_internal;
         uint64_t count_stamp = 0;
         const size_t page_cache_size;
 
@@ -342,7 +347,7 @@ static void test_realistic(const std::string& path_to_mem_trace){
     if (f.is_open()) {
         std::string line;
         {
-            LRU_K normal_lru(page_cache_size,2);
+            LRU_K normal_lru(page_cache_size,2,TEST_NUM_THREADS);
             test::BOOST_TEST_LRU test_lru(page_cache_size);
             auto start = std::chrono::system_clock::now();
             for (unsigned long long i = 0; i < 20 * FUZZ_SIZE; i++) {
@@ -376,7 +381,7 @@ static void test_realistic(const std::string& path_to_mem_trace){
         }
         f.seekg(0, std::ios_base::beg);
         {
-            LRU_K normal_lru(page_cache_size,2);
+            LRU_K normal_lru(page_cache_size,2, TEST_NUM_THREADS);
             test::BOOST_TEST_LRU test_lru(page_cache_size);
             auto start = std::chrono::system_clock::now();
             for (unsigned long long i = 0; i < 20 * FUZZ_SIZE; i++) {
@@ -421,7 +426,7 @@ static void test_file_read_speed(const std::string &path_to_mem_trace) {
 
     const size_t page_cache_size = 16*1024;
 
-    LRU_K c1(page_cache_size,2);
+    LRU_K c1(page_cache_size,2,TEST_NUM_THREADS);
 //
     bool is_load;
     uint64_t address;
@@ -487,7 +492,7 @@ static void test_file_read_speed(const std::string &path_to_mem_trace) {
 
     //////////////////////
 
-    LRU_K c2(page_cache_size,2);
+    LRU_K c2(page_cache_size,2,TEST_NUM_THREADS);
 
     start = std::chrono::system_clock::now();
 
@@ -597,7 +602,7 @@ void arc_t(__off_t length, const char *addr) {
     }
 
     const size_t page_cache_size = 32 * 1024;
-    ARC a1(page_cache_size);
+    ARC a1(page_cache_size,TEST_NUM_THREADS);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
     auto start = std::chrono::system_clock::now();
@@ -630,7 +635,7 @@ void car_t(__off_t length, const char *addr) {    cpu_set_t  mask;
         std::cerr << "Error calling pthread_setaffinity_np: " << result << "\n";
     }
     const size_t page_cache_size = 32 * 1024;
-    CAR a1(page_cache_size);
+    CAR a1(page_cache_size,TEST_NUM_THREADS);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
     auto start = std::chrono::system_clock::now();
@@ -664,7 +669,7 @@ void lru_t(__off_t length, const char *addr) {
         std::cerr << "Error calling pthread_setaffinity_np: " << result << "\n";
     }
     const size_t page_cache_size = 32 * 1024;
-    LRU_K a1(page_cache_size,2);
+    LRU_K a1(page_cache_size,2,TEST_NUM_THREADS);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
     auto start = std::chrono::system_clock::now();
@@ -698,7 +703,7 @@ void c_t(__off_t length, const char *addr) {
         std::cerr << "Error calling pthread_setaffinity_np: " << result << "\n";
     }
     const size_t page_cache_size = 32 * 1024;
-    CLOCK a1(page_cache_size,2);
+    CLOCK a1(page_cache_size,2,TEST_NUM_THREADS);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
     auto start = std::chrono::system_clock::now();
@@ -781,7 +786,7 @@ static void lru_consume_all(const std::string &path_to_mem_trace) {
     if (addr == MAP_FAILED)
         std::cout<<"Couldn't mmap the file"<<std::endl;
 
-    LRU_K c1(page_cache_size,2);
+    LRU_K c1(page_cache_size,2,TEST_NUM_THREADS);
 
     end = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsed_seconds = end - start;
@@ -814,7 +819,7 @@ static void lru_consume_all(const std::string &path_to_mem_trace) {
 
 void arc_np_t(__off_t length, const char *addr) {
     const size_t page_cache_size = 32 * 1024;
-    ARC a1(page_cache_size);
+    ARC a1(page_cache_size,TEST_NUM_THREADS);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
     auto start = std::chrono::system_clock::now();
@@ -861,7 +866,7 @@ static void arc_compare_CPU_pin(const std::string &path_to_mem_trace) {
     if (addr == MAP_FAILED)
         std::cout<<"Couldn't mmap the file"<<std::endl;
 
-    ARC c1(page_cache_size);
+    ARC c1(page_cache_size,TEST_NUM_THREADS);
 
     end = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsed_seconds = end - start;
@@ -1009,7 +1014,7 @@ static void create_page_array_mem_trace(const std::string& path_to_mem_trace){
     if (f.is_open()) {
         std::string line;
         constexpr size_t cache_size = 6;
-        auto alg = CAR(cache_size);
+        auto alg = CAR(cache_size,TEST_NUM_THREADS);
         std::vector<std::pair<uint64_t,uint64_t>> change_diffs;
         size_t i = 0;
         std::shared_ptr<nd_t> nd;

@@ -2,14 +2,15 @@
 
 bool ARC::consume(page_t page_start) {
     auto& page_data = page_to_data[page_start];
+    auto& page_data_internal = page_to_data_internal[page_start];
     auto in_cache = (page_data.in_list == T1 || page_data.in_list == T2);
-    const bool not_changed = page_data.in_list==T2 && (std::next(page_data.at_iterator) == caches[T2].end());
+    const bool not_changed = page_data.in_list==T2 && (std::next(page_data_internal.at_iterator) == caches[T2].end());
     redundant_pfault = false;
     known_value = 0;
     if (in_cache){
-        remove_from_cache_and_update_indices(page_data.in_list,page_data.at_iterator); // TODO caches[page_data.in_list].erase(page_data.at_iterator);
+        remove_from_cache_and_update_indices(page_data.in_list,page_data_internal.at_iterator); // TODO caches[page_data.in_list].erase(page_data.at_iterator);
         page_data.index = caches[T2].size();
-        page_data.at_iterator = caches[T2].insert(caches[T2].end(),page_start);
+        page_data_internal.at_iterator = caches[T2].insert(caches[T2].end(),page_start);
         page_data.in_list = T2;
     }
     else if(page_data.in_list == B1){
@@ -17,10 +18,10 @@ bool ARC::consume(page_t page_start) {
         p = std::min(p+delta_1,static_cast<double>(page_cache_size));
         replace(false);
         //Remove from B1, no need to update indices as B_i is not considered for TL
-        caches[B1].erase(page_data.at_iterator);
+        caches[B1].erase(page_data_internal.at_iterator);
         //Insert into T2 MRU
         page_data.index = caches[T2].size();
-        page_data.at_iterator = caches[T2].insert(caches[T2].end(),page_start);
+        page_data_internal.at_iterator = caches[T2].insert(caches[T2].end(),page_start);
         page_data.in_list = T2;
     }
     else if(page_data.in_list == B2){
@@ -28,10 +29,10 @@ bool ARC::consume(page_t page_start) {
         p = std::max(p-delta_2,0.);
         replace(true);
         //Remove from B2, no need to update indices as B_i is not considered for TL
-        caches[B2].erase(page_data.at_iterator);
+        caches[B2].erase(page_data_internal.at_iterator);
         //Insert into T2 MRU
         page_data.index = caches[T2].size();
-        page_data.at_iterator = caches[T2].insert(caches[T2].end(),page_start);
+        page_data_internal.at_iterator = caches[T2].insert(caches[T2].end(),page_start);
         page_data.in_list = T2;
     }
     else{
@@ -39,6 +40,7 @@ bool ARC::consume(page_t page_start) {
             if(caches[T1].size() < page_cache_size){
                 auto it_to_remove = caches[B1].begin();
                 page_to_data.erase(*it_to_remove);
+                page_to_data_internal.erase(*it_to_remove);
                 caches[B1].erase(it_to_remove);
                 replace(false);
             }
@@ -47,6 +49,7 @@ bool ARC::consume(page_t page_start) {
                 auto page = *it_to_remove;
                 remove_from_cache_and_update_indices(T1,it_to_remove); // TODO caches[T1].erase(it_to_remove);
                 page_to_data.erase(page);
+                page_to_data_internal.erase(page);
             }
         }
         else{
@@ -55,6 +58,7 @@ bool ARC::consume(page_t page_start) {
                 if(total_size == 2*page_cache_size){
                     auto it_to_remove = caches[B2].begin();
                     page_to_data.erase(*it_to_remove);
+                    page_to_data_internal.erase(*it_to_remove);
                     caches[B2].erase(it_to_remove);
                 }
                 replace(false);
@@ -63,7 +67,7 @@ bool ARC::consume(page_t page_start) {
         //Put in T1 MRU, and update relevant indices
         page_data.index = caches[T1].size();
         auto ins_it = caches[T1].insert(caches[T1].end(),page_start);
-        page_data.at_iterator = ins_it;
+        page_data_internal.at_iterator = ins_it;
         page_data.in_list = T1;
     }
     return !not_changed;
@@ -89,9 +93,10 @@ void ARC::lru_to_mru(cache_list_idx from, cache_list_idx to) {
     auto page_it = caches.at(from).begin();
     const auto page = *page_it;
     auto & page_data = page_to_data[page];
+    auto & page_data_internal = page_to_data_internal[page];
     remove_from_cache_and_update_indices(from, page_it); // TODO caches[from].erase(page_it);
     page_data.in_list = to;
-    page_data.at_iterator = caches.at(to).insert(caches.at(to).end(), page);
+    page_data_internal.at_iterator = caches.at(to).insert(caches.at(to).end(), page);
 }
 
 std::unique_ptr<page_cache_copy_t> ARC::get_page_cache_copy() {
