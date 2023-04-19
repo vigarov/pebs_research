@@ -261,7 +261,7 @@ namespace consideration_methods{
     }
 
     static inline bool consider_ratio(const AlgInThread &alg, uint8_t is_load) {
-        return (is_load && ((static_cast<double>(alg.considered_loads) / static_cast<double>(alg.considered_stores)) <= alg.twa.ratio))
+        return (is_load && alg.considered_stores!=0 && ((static_cast<double>(alg.considered_loads) / static_cast<double>(alg.considered_stores)) <= alg.twa.ratio))
                || (!is_load && (alg.twa.ratio <= (static_cast<double>(alg.considered_loads) / static_cast<double>(alg.considered_stores))));
     }
 
