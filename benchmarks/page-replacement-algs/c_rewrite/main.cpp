@@ -417,12 +417,10 @@ static void comparison_and_standalone(std::barrier<>& it_barrier, std::string co
                             } else {
                                 alg_asi->curr_non_pfault_distance_sum += md;
                             }
-                            alg_asi->ptchanges->emplace_back(seen, md);
                         }
                         else{
                             md = 0;
                         }
-
                         if(md != alg_asi->previous_sum){
                             if(!alg_asi->emplaced_previously) alg_asi->ptchanges->emplace_back(seen-1, alg_asi->previous_sum);
                             alg_asi->ptchanges->emplace_back(seen, md);
