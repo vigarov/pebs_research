@@ -305,7 +305,7 @@ static void simulate_one(std::barrier<>& it_barrier, ThreadWorkAlgs twa){
     size_t n_writes = 0,seen = 0;
     //Create algs
 
-    AlgInThread ait = {.alg=page_cache_algs::get_alg(twa.alg_info.first),.considerationMethod=consideration_methods::get_consideration_method(twa.is_userspace,twa.ratio>0),.twa=std::move(twa)};
+    AlgInThread ait = {.alg=page_cache_algs::get_alg(twa.alg_info.first),.considerationMethod=consideration_methods::get_consideration_method(twa.is_userspace,twa.ratio!=NO_RATIO),.twa=std::move(twa)};
     std::cout << tid << ": Waiting for first fill and starting..." << std::endl;
     while(true){
         //Wait to be notified you can go ; === value to be 0
@@ -323,13 +323,13 @@ static void simulate_one(std::barrier<>& it_barrier, ThreadWorkAlgs twa){
             auto is_load = mem_reqtype_buf[i];
 
             seen += 1;
-            if (seen % 50'000'000 == 0){
+            if (seen % 100'000'000 == 0){
                 std::stringstream ss;
                 ss << tid << " - "<< get_alg_div_name(ait.twa.alg_info) <<" - Reached seen = " << seen << "\n"
                           << "SampleRate=" << ait.twa.alg_info.second << ",#T="
                           << ait.considered_loads + ait.considered_stores << " (#S="
                           << ait.considered_stores << ",#L=" << ait.considered_loads;
-                if (ait.twa.ratio > 0) {
+                if (ait.twa.ratio != NO_RATIO) {
                     ss << ", gt_ratio=" << ait.twa.ratio
                               << ", curr_ratio=" << (static_cast<double>(ait.considered_loads) / static_cast<double>(ait.considered_stores));
                 }
@@ -384,7 +384,7 @@ static bool fill_array(std::ifstream& f){
     return i==BUFFER_SIZE;
 }
 
-#define BIGSKIP 7228143
+//#define BIGSKIP 7228143
 #ifdef BIGSKIP
 #define RELAX_NUM_LINES 1000
 static const unsigned long long SKIP_OFF = (BIGSKIP-RELAX_NUM_LINES)*LINE_SIZE_BYTES;
@@ -394,7 +394,7 @@ static void reader_thread(std::string path_to_mem_trace){
     const auto total_nm_processes = num_ready;
     const std::string id_str = "READER PROCESS -";
     std::ifstream f(path_to_mem_trace);
-    auto stop_condition = [](size_t read){return read>100'000'000;};
+    auto stop_condition = [](size_t read){return read>520'000'000;};
     if (f.is_open()) {
 #ifdef BIGSKIP
         //After analysis, a new unique page for this benchmark arrives every ~2000 mem accesses before access number
@@ -413,21 +413,7 @@ static void reader_thread(std::string path_to_mem_trace){
         std::cout<<f.tellg()<<std::endl;
 #endif
         size_t n = 0,total_read = 0;
-        if(!fill_array(f)){
-            std::cerr<<id_str<<"Failed initial read, exiting..."<<std::endl;
-            goto out;
-        }
-        total_read+=BUFFER_SIZE;
-        std::cout << id_str << " First read success" <<std::endl;
-
         while(!stop_condition(total_read)){
-            {
-                std::unique_lock<std::mutex> lk(it_mutex);
-                it_cv.wait(lk,[total_nm_processes](){return num_ready==total_nm_processes;});
-                num_ready = 0;
-                it_cv.notify_all();
-            }
-
             //Get new data
             if(fill_array(f)){
                 total_read+=BUFFER_SIZE;
@@ -435,8 +421,20 @@ static void reader_thread(std::string path_to_mem_trace){
             else{
                 break; //error or EOF
             }
+
+            {
+                std::unique_lock<std::mutex> lk(it_mutex);
+                num_ready = 0;
+                it_cv.notify_all();
+            }
+            
             n+=1;
             std::cout << id_str << " n=" << n << std::endl;
+
+            {
+                std::unique_lock<std::mutex> lk(it_mutex);
+                it_cv.wait(lk,[total_nm_processes](){return num_ready==total_nm_processes;});
+            }
         }
 out:
         f.close();
