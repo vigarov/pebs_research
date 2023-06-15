@@ -21,16 +21,18 @@
 
 #define TEST_NUM_THREADS 2 
 
+#ifdef POST_CHANGES
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 static void test_ma_small(){
     int K = 2;
     int page_cache_size = 3; // ~128 KB mem
     std::vector<GenericAlgorithm*> const my_algs = {
-            new LRU_K(page_cache_size, K,TEST_NUM_THREADS),
-            new CLOCK(page_cache_size, K,TEST_NUM_THREADS),
-            new ARC(page_cache_size,TEST_NUM_THREADS),
-            new CAR(page_cache_size,TEST_NUM_THREADS)
+            new LRU_K(page_cache_size, K),
+            new CLOCK(page_cache_size, K),
+            new ARC(page_cache_size),
+            new CAR(page_cache_size)
     };
 
     std::vector<std::string> const test_accesses = {"W0x7fffffffd9a8", "W0x7fffffffd980", "W0x7ffff7ffde0e", "W0x7ffff7ffdb78",
@@ -59,10 +61,10 @@ static void test_ma_diverse(){
     int K = 2;
     int page_cache_size = 3; // ~128 KB mem
     std::vector<GenericAlgorithm*> const my_algs = {
-            new LRU_K(page_cache_size, K,TEST_NUM_THREADS),
-            new CLOCK(page_cache_size, K,TEST_NUM_THREADS),
-            new ARC(page_cache_size,TEST_NUM_THREADS),
-            new CAR(page_cache_size,TEST_NUM_THREADS)
+            new LRU_K(page_cache_size, K),
+            new CLOCK(page_cache_size, K),
+            new ARC(page_cache_size),
+            new CAR(page_cache_size)
     };
 
     std::vector<std::string> const test_accesses = {
@@ -93,10 +95,10 @@ static void test_ma_med(){
     int K = 2;
     int page_cache_size = 3; // ~128 KB mem
     std::vector<GenericAlgorithm*> const my_algs = {
-            new LRU_K(page_cache_size, K,TEST_NUM_THREADS),
-            new CLOCK(page_cache_size, K,TEST_NUM_THREADS),
-            new ARC(page_cache_size,TEST_NUM_THREADS),
-            new CAR(page_cache_size,TEST_NUM_THREADS)
+            new LRU_K(page_cache_size, K),
+            new CLOCK(page_cache_size, K),
+            new ARC(page_cache_size),
+            new CAR(page_cache_size)
     };
 
     std::vector<std::string> const test_accesses = {
@@ -347,7 +349,7 @@ static void test_realistic(const std::string& path_to_mem_trace){
     if (f.is_open()) {
         std::string line;
         {
-            LRU_K normal_lru(page_cache_size,2,TEST_NUM_THREADS);
+            LRU_K normal_lru(page_cache_size,2);
             test::BOOST_TEST_LRU test_lru(page_cache_size);
             auto start = std::chrono::system_clock::now();
             for (unsigned long long i = 0; i < 20 * FUZZ_SIZE; i++) {
@@ -426,7 +428,7 @@ static void test_file_read_speed(const std::string &path_to_mem_trace) {
 
     const size_t page_cache_size = 16*1024;
 
-    LRU_K c1(page_cache_size,2,TEST_NUM_THREADS);
+    LRU_K c1(page_cache_size,2);
 //
     bool is_load;
     uint64_t address;
@@ -492,7 +494,7 @@ static void test_file_read_speed(const std::string &path_to_mem_trace) {
 
     //////////////////////
 
-    LRU_K c2(page_cache_size,2,TEST_NUM_THREADS);
+    LRU_K c2(page_cache_size,2);
 
     start = std::chrono::system_clock::now();
 
@@ -602,7 +604,7 @@ void arc_t(__off_t length, const char *addr) {
     }
 
     const size_t page_cache_size = 32 * 1024;
-    ARC a1(page_cache_size,TEST_NUM_THREADS);
+    ARC a1(page_cache_size);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
     auto start = std::chrono::system_clock::now();
@@ -635,7 +637,7 @@ void car_t(__off_t length, const char *addr) {    cpu_set_t  mask;
         std::cerr << "Error calling pthread_setaffinity_np: " << result << "\n";
     }
     const size_t page_cache_size = 32 * 1024;
-    CAR a1(page_cache_size,TEST_NUM_THREADS);
+    CAR a1(page_cache_size);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
     auto start = std::chrono::system_clock::now();
@@ -669,7 +671,7 @@ void lru_t(__off_t length, const char *addr) {
         std::cerr << "Error calling pthread_setaffinity_np: " << result << "\n";
     }
     const size_t page_cache_size = 32 * 1024;
-    LRU_K a1(page_cache_size,2,TEST_NUM_THREADS);
+    LRU_K a1(page_cache_size,2);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
     auto start = std::chrono::system_clock::now();
@@ -703,7 +705,7 @@ void c_t(__off_t length, const char *addr) {
         std::cerr << "Error calling pthread_setaffinity_np: " << result << "\n";
     }
     const size_t page_cache_size = 32 * 1024;
-    CLOCK a1(page_cache_size,2,TEST_NUM_THREADS);
+    CLOCK a1(page_cache_size,2);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
     auto start = std::chrono::system_clock::now();
@@ -786,7 +788,7 @@ static void lru_consume_all(const std::string &path_to_mem_trace) {
     if (addr == MAP_FAILED)
         std::cout<<"Couldn't mmap the file"<<std::endl;
 
-    LRU_K c1(page_cache_size,2,TEST_NUM_THREADS);
+    LRU_K c1(page_cache_size,2);
 
     end = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsed_seconds = end - start;
@@ -819,7 +821,7 @@ static void lru_consume_all(const std::string &path_to_mem_trace) {
 
 void arc_np_t(__off_t length, const char *addr) {
     const size_t page_cache_size = 32 * 1024;
-    ARC a1(page_cache_size,TEST_NUM_THREADS);
+    ARC a1(page_cache_size);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
     auto start = std::chrono::system_clock::now();
@@ -866,7 +868,7 @@ static void arc_compare_CPU_pin(const std::string &path_to_mem_trace) {
     if (addr == MAP_FAILED)
         std::cout<<"Couldn't mmap the file"<<std::endl;
 
-    ARC c1(page_cache_size,TEST_NUM_THREADS);
+    ARC c1(page_cache_size);
 
     end = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsed_seconds = end - start;
@@ -1014,7 +1016,7 @@ static void create_page_array_mem_trace(const std::string& path_to_mem_trace){
     if (f.is_open()) {
         std::string line;
         constexpr size_t cache_size = 6;
-        auto alg = CAR(cache_size,TEST_NUM_THREADS);
+        auto alg = CAR(cache_size);
         std::vector<std::pair<uint64_t,uint64_t>> change_diffs;
         size_t i = 0;
         std::shared_ptr<nd_t> nd;
@@ -1067,3 +1069,5 @@ void test_all(const std::string& path_to_mem_trace){
 void test_latest(const std::string& path_to_mem_trace){
     create_page_array_mem_trace(path_to_mem_trace);
 }
+
+#endif
