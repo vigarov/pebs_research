@@ -368,7 +368,13 @@ static void simulate_one(std::barrier<>& it_barrier, ThreadWorkAlgs twa){
             it_cv.notify_all();
         }
     }
-    std::cout<< tid << "Finished file reading"<<std::endl;
+
+    {
+        std::unique_lock<std::mutex> lk(it_mutex);
+        num_ready = num_ready + 1;
+        it_cv.notify_all();
+    }
+    std::cout<< tid << " - "<< get_alg_div_name(ait.twa.alg_info) << " Finished file reading; no last"<<std::endl;
 }
 
 
