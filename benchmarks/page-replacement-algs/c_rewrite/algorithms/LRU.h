@@ -7,7 +7,7 @@
 
 class LRU_K : public GenericAlgorithm{
 public:
-    LRU_K(uint16_t page_cache_size,uint8_t K) : GenericAlgorithm(page_cache_size),K(K){};
+    LRU_K(size_t page_cache_size,uint8_t K) : GenericAlgorithm(page_cache_size),K(K){};
     bool consume(page_t page_start) override;
     inline bool is_page_fault(page_t page) const override {return !page_to_data_internal.contains(page);};
     std::string name() override {return "LRU_"+std::to_string(K);};

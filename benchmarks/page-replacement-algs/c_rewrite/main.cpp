@@ -25,7 +25,7 @@ namespace fs = std::filesystem;
 
 static constexpr uint8_t K = 2;
 static constexpr size_t MAX_PAGE_CACHE_SIZE = 507569; // pages = `$ ulimit -l`/4  ~= 2GB mem
-static constexpr size_t page_cache_size = 8*1024; // ~ 128 KB mem
+static constexpr size_t page_cache_size = 256*1024; // ~ 128 KB mem
 static constexpr size_t LINE_SIZE_BYTES = 16; // "W0x7fffffffd9a8\n"*1 (===sizeof(char))
 
 static const size_t max_num_threads = std::thread::hardware_concurrency();

@@ -9,7 +9,7 @@
 
 class CAR : public GenericAlgorithm{
 public:
-    explicit CAR(uint16_t page_cache_size) : GenericAlgorithm(page_cache_size){};
+    explicit CAR(size_t page_cache_size) : GenericAlgorithm(page_cache_size){};
     bool consume(page_t page_start) override;
     inline bool is_page_fault(page_t page) const override {return !page_to_data_internal.contains(page) || page_to_data_internal.at(page).in_list == B1 || page_to_data_internal.at(page).in_list == B2;};
     std::string name() override {return "CAR";};

@@ -9,7 +9,7 @@
 
 class CLOCK : public GenericAlgorithm{
 public:
-    CLOCK(uint16_t page_cache_size,uint8_t i) : GenericAlgorithm(page_cache_size),head(page_cache.begin()),i(i){};
+    CLOCK(size_t page_cache_size,uint8_t i) : GenericAlgorithm(page_cache_size),head(page_cache.begin()),i(i){};
     bool consume(page_t page_start) override;
 
     inline bool is_page_fault(page_t page) const override {return !page_to_data_internal.contains(page);};
