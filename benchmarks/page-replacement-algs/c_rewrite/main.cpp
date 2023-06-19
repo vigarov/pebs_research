@@ -20,12 +20,19 @@
 #include <random>
 #include "tests/test.h"
 #include "algorithms/LRU.h"
+#include <unordered_set>
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
+#define SERVER 1
+
 static constexpr size_t MAX_PAGE_CACHE_SIZE = 507569; // pages = `$ ulimit -l`/4  ~= 2GB mem
+#ifdef SERVER
+static constexpr size_t page_cache_size = 8*1024*1024; // ~ 128 KB mem
+#else
 static constexpr size_t page_cache_size = 256*1024; // ~ 128 KB mem
+#endif
 static constexpr size_t LINE_SIZE_BYTES = 16; // "W0x7fffffffd9a8\n"*1 (===sizeof(char))
 
 static const size_t max_num_threads = std::thread::hardware_concurrency();
@@ -166,8 +173,11 @@ std::unordered_map<std::string, json> populate_or_get_db(const Args& args) {
 
 static constexpr double REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO = 0.01;
 static constexpr double AVERAGE_SAMPLE_RATIO = 0.05;
+#ifdef SERVER
+static constexpr size_t BUFFER_SIZE = 2*1024*1024;
+#else
 static constexpr size_t BUFFER_SIZE = 1024*1024;
-
+#endif
 static constexpr const int ALG_DIV_PRECISION = 2;
 namespace page_cache_algs {
     enum type {LRU_t, GCLOCK_t, ARC_t, CAR_t, NUM_ALGS};
@@ -400,7 +410,12 @@ static void reader_thread(std::string path_to_mem_trace){
     const auto total_nm_processes = num_ready;
     const std::string id_str = "READER PROCESS -";
     std::ifstream f(path_to_mem_trace);
+    std::unordered_set<page_t> unique_pages{};
+#ifdef SERVER
+    auto stop_condition = [](size_t read){return read>510'000'000;};
+#else
     auto stop_condition = [](size_t read){return read>520'000'000;};
+#endif
     if (f.is_open()) {
 #ifdef BIGSKIP
         //After analysis, a new unique page for this benchmark arrives every ~2000 mem accesses before access number
