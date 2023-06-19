@@ -320,8 +320,9 @@ static void simulate_one(
 #ifdef SERVER
         const char* mmap_file_address,
         size_t total_length,
-#endif
+#else
         std::barrier<>& it_barrier,
+#endif
         ThreadWorkAlgs twa){
     auto tid = std::this_thread::get_id();
     size_t n_writes = 0,seen = 0;
@@ -342,14 +343,12 @@ static void simulate_one(
             std::unique_lock<std::mutex> lk(it_mutex);
             it_cv.wait(lk,[](){return num_ready==0;});
         }
-#endif
         it_barrier.arrive_and_wait();
-#ifndef SERVER
         if(!continue_running){
             break;
         }
 #endif
-        for(size_t i = 0;i<BUFFER_SIZE;i++){ // preserve for loop's behavior of saving every BUFFER_SIZE iterartions
+        for(size_t i = 0;i<BUFFER_SIZE && at < total_length;i++){ // preserve for loop's behavior of saving every BUFFER_SIZE iterartions
 #ifndef SERVER
             auto page_base = page_start_from_mem_address(mem_address_buf[i]);
             auto is_load = mem_reqtype_buf[i];
@@ -578,8 +577,9 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
                 all_threads.emplace_back(simulate_one,
 #ifdef SERVER
                                          addr, length,
-#endif
+#else
                                          std::ref(it_barrier),
+#endif
                                          t);
                 if(div == REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO) {
                     //Also create a Ratio thread
@@ -590,8 +590,9 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
                     all_threads.emplace_back(simulate_one,
 #ifdef SERVER
                                             addr, length,
-#endif
+#else
                                              std::ref(it_barrier),
+#endif
                                              t_r);
                 }
             }
