@@ -6,7 +6,7 @@
 #include <random>
 #include <chrono>
 #include "test.h"
-#include "../algorithms/LRU.h"
+#include "../algorithms/LRU_K.h"
 #include "../algorithms/CLOCK.h"
 #include "../algorithms/ARC.h"
 #include "../algorithms/CAR.h"
@@ -308,15 +308,15 @@ namespace test {
             return sum;
         };
 
-        const lru_cache_t *get_cache_iterable() const { return &page_cache; }
+        const lru_k_cache_t *get_cache_iterable() const { return &page_cache; }
 
         virtual std::string toString() { return name() + " : cache = " + cache_to_string(10); };
     private:
         std::string name() { return "BOOST_TEST_LRU"; }
 
-        lru_cache_t page_cache{}; // idx 0 = MRU; idx size-1 = LRU, sorted by second history
+        lru_k_cache_t page_cache{}; // idx 0 = MRU; idx size-1 = LRU, sorted by second history
         boost::unordered_flat_map<page_t, LRU_page_data> page_to_data;
-        boost::unordered_flat_map<page_t,LRU_page_data_internal> page_to_data_internal;
+        boost::unordered_flat_map<page_t,LRU_K_page_data_internal> page_to_data_internal;
         uint64_t count_stamp = 0;
         const size_t page_cache_size;
 

@@ -30,13 +30,20 @@ inline static page_t page_start_from_mem_address(ptr_t x) {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+typedef std::list<page_t> lru_k_cache_t;
+
+struct LRU_K_page_data_internal{
+    std::deque<uint64_t> history;
+    lru_k_cache_t::iterator at_iterator;
+    LRU_K_page_data_internal(): LRU_K_page_data_internal(2) {}
+    explicit LRU_K_page_data_internal(uint8_t K) : history(K){}
+};
+
+///~~~~
 typedef std::list<page_t> lru_cache_t;
 
 struct LRU_page_data_internal{
-    std::deque<uint64_t> history;
     lru_cache_t::iterator at_iterator;
-    LRU_page_data_internal(): LRU_page_data_internal(2) {}
-    explicit LRU_page_data_internal(uint8_t K) : history(K){}
 };
 
 ///~~~~

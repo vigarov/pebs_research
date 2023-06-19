@@ -13,7 +13,7 @@ public:
     bool consume(page_t page_start) override;
 
     inline bool is_page_fault(page_t page) const override {return !page_to_data_internal.contains(page);};
-    std::string name() override {return "GLOCK";};
+    std::string name() override {return i != 1 ? "GCLOCK" : "CLOCK";};
     std::unique_ptr<page_cache_copy_t> get_page_cache_copy() override;
     const gclock_cache_t * get_cache_iterable() const {return &page_cache;}
 private:

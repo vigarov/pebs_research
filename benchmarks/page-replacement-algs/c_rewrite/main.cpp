@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <regex>
 #include "nlohmann/json.hpp"
-#include "algorithms/LRU.h"
+#include "algorithms/LRU_K.h"
 #include "algorithms/CLOCK.h"
 #include "algorithms/ARC.h"
 #include "algorithms/CAR.h"
