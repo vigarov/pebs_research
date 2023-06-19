@@ -178,7 +178,7 @@ std::unordered_map<std::string, json> populate_or_get_db(const Args& args) {
 static constexpr double REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO = 0.01;
 static constexpr double AVERAGE_SAMPLE_RATIO = 0.05;
 #ifdef SERVER
-static constexpr size_t BUFFER_SIZE = 2*1024*1024;
+static constexpr size_t BUFFER_SIZE = 128*1024*1024;
 #else
 static constexpr size_t BUFFER_SIZE = 1024*1024;
 #endif
@@ -320,9 +320,8 @@ static void simulate_one(
 #ifdef SERVER
         const char* mmap_file_address,
         size_t total_length,
-#else
-        std::barrier<>& it_barrier,
 #endif
+        std::barrier<>& it_barrier,
         ThreadWorkAlgs twa){
     auto tid = std::this_thread::get_id();
     size_t n_writes = 0,seen = 0;
@@ -343,7 +342,9 @@ static void simulate_one(
             std::unique_lock<std::mutex> lk(it_mutex);
             it_cv.wait(lk,[](){return num_ready==0;});
         }
+#endif
         it_barrier.arrive_and_wait();
+#ifndef SERVER
         if(!continue_running){
             break;
         }
@@ -577,9 +578,8 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
                 all_threads.emplace_back(simulate_one,
 #ifdef SERVER
                                          addr, length,
-#else
-                                         std::ref(it_barrier),
 #endif
+                                         std::ref(it_barrier),
                                          t);
                 if(div == REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO) {
                     //Also create a Ratio thread
@@ -590,9 +590,8 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
                     all_threads.emplace_back(simulate_one,
 #ifdef SERVER
                                             addr, length,
-#else
-                                             std::ref(it_barrier),
 #endif
+                                             std::ref(it_barrier),
                                              t_r);
                 }
             }
