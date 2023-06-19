@@ -22,6 +22,10 @@
 #include "algorithms/LRU.h"
 #include <unordered_set>
 
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
@@ -307,17 +311,33 @@ void save_to_file_compressed(const std::shared_ptr<temp_log_t>& array, const std
     gzclose(f);
 }
 
+#ifdef SERVER
+#endif
 
 static constexpr char SEPARATOR = ',';
 
-static void simulate_one(std::barrier<>& it_barrier, ThreadWorkAlgs twa){
+static void simulate_one(
+#ifdef SERVER
+        const char* mmap_file_address,
+        size_t total_length,
+#else
+        std::barrier<>& it_barrier,
+#endif
+        ThreadWorkAlgs twa){
     auto tid = std::this_thread::get_id();
     size_t n_writes = 0,seen = 0;
     //Create algs
 
     AlgInThread ait = {.alg=page_cache_algs::get_alg(twa.alg_info.first),.considerationMethod=consideration_methods::get_consideration_method(twa.is_userspace,twa.ratio!=NO_RATIO),.twa=std::move(twa)};
     std::cout << tid << ": Waiting for first fill and starting..." << std::endl;
+
+#ifndef SERVER
     while(true){
+#else
+    size_t at = 0;
+    while(at < total_length){
+#endif
+#ifndef SERVER
         //Wait to be notified you can go ; === value to be 0
         {
             std::unique_lock<std::mutex> lk(it_mutex);
@@ -327,23 +347,43 @@ static void simulate_one(std::barrier<>& it_barrier, ThreadWorkAlgs twa){
         if(!continue_running){
             break;
         }
-
-        for(size_t i = 0;i<BUFFER_SIZE;i++){
+#endif
+        for(size_t i = 0;i<BUFFER_SIZE;i++){ // preserve for loop's behavior of saving every BUFFER_SIZE iterartions
+#ifndef SERVER
             auto page_base = page_start_from_mem_address(mem_address_buf[i]);
             auto is_load = mem_reqtype_buf[i];
+#else
+
+            auto is_load = mmap_file_address[at++] == 'R';
+            char* str_end = nullptr;
+            auto address = std::strtoull(mmap_file_address+at,&str_end,16);
+            if (errno == ERANGE)
+            {
+                errno = 0;
+                std::cout << tid << " - range error, exiting";
+                break;
+            }
+            at += (str_end+1-(mmap_file_address+at)); //`+1` skips the \n
+            auto page_base = page_start_from_mem_address(address);
+#endif
 
             seen += 1;
             if (seen % 100'000'000 == 0){
                 std::stringstream ss;
                 ss << tid << " - "<< get_alg_div_name(ait.twa.alg_info) <<" - Reached seen = " << seen << "\n"
-                          << "SampleRate=" << ait.twa.alg_info.second << ",#T="
-                          << ait.considered_loads + ait.considered_stores << " (#S="
-                          << ait.considered_stores << ",#L=" << ait.considered_loads;
+                   << "SampleRate=" << ait.twa.alg_info.second << ",#T="
+                   << ait.considered_loads + ait.considered_stores << " (#S="
+                   << ait.considered_stores << ",#L=" << ait.considered_loads;
                 if (ait.twa.ratio != NO_RATIO) {
                     ss << ", gt_ratio=" << ait.twa.ratio
-                              << ", curr_ratio=" << (static_cast<double>(ait.considered_loads) / static_cast<double>(ait.considered_stores));
+                       << ", curr_ratio=" << (static_cast<double>(ait.considered_loads) / static_cast<double>(ait.considered_stores));
                 }
-                ss << "), n_writes=" << n_writes << ",i=" << i;
+                ss << "), n_writes=" << n_writes <<
+#ifndef SERVER
+                ",i=" << i;
+#else
+                ",at=" << at;
+#endif
                 std::cout<<ss.str()<<std::endl;
             }
             auto pfault = ait.alg->is_page_fault(page_base);
@@ -362,7 +402,7 @@ static void simulate_one(std::barrier<>& it_barrier, ThreadWorkAlgs twa){
             if (pfault) {
                 ait.n_pfaults++;
             }
-        }
+        } //endfor
 
         std::ofstream ofs(ait.twa.save_dir + OTHER_DATA_FN,std::ios_base::out|std::ios_base::trunc);
         ofs << "seen,considered_l,considered_s,pfaults,considered_pfaults\n"
@@ -371,30 +411,36 @@ static void simulate_one(std::barrier<>& it_barrier, ThreadWorkAlgs twa){
         ofs.close();
 
         n_writes++;
+
+#ifndef SERVER
         //Say we're ready!
         {
             std::unique_lock<std::mutex> lk(it_mutex);
             num_ready = num_ready + 1;
             it_cv.notify_all();
         }
+#endif
     }
 
+#ifndef SERVER
     {
         std::unique_lock<std::mutex> lk(it_mutex);
         num_ready = num_ready + 1;
         it_cv.notify_all();
     }
+#endif
     std::cout<< tid << " - "<< get_alg_div_name(ait.twa.alg_info) << " Finished file reading; no last"<<std::endl;
 }
 
 
-static bool fill_array(std::ifstream& f){
+static bool fill_array_and_updated_page_set(std::ifstream& f,std::unordered_set<page_t>& unique_pages){
     size_t i = 0;
     for(std::string line; i<BUFFER_SIZE && std::getline(f,line);i++){
         const uint8_t is_load = line[0]=='R';
         const uint64_t mem_address = std::stoull(line.substr(1), nullptr, 16);
-        const uint64_t page_start = page_start_from_mem_address(mem_address);
-        mem_address_buf[i] = page_start;
+        const page_t page_start = page_start_from_mem_address(mem_address);
+        unique_pages.insert(page_start);
+        mem_address_buf[i] = (uint64_t)page_start;
         mem_reqtype_buf[i] = is_load;
     }
     return i==BUFFER_SIZE;
@@ -406,7 +452,7 @@ static bool fill_array(std::ifstream& f){
 static const unsigned long long SKIP_OFF = (BIGSKIP-RELAX_NUM_LINES)*LINE_SIZE_BYTES;
 #endif
 
-static void reader_thread(std::string path_to_mem_trace){
+static void reader_thread(std::string path_to_mem_trace,std::string parent_dir){
     const auto total_nm_processes = num_ready;
     const std::string id_str = "READER PROCESS -";
     std::ifstream f(path_to_mem_trace);
@@ -436,7 +482,7 @@ static void reader_thread(std::string path_to_mem_trace){
         size_t n = 0,total_read = 0;
         while(!stop_condition(total_read)){
             //Get new data
-            if(fill_array(f)){
+            if(fill_array_and_updated_page_set(f,unique_pages)){
                 total_read+=BUFFER_SIZE;
             }
             else{
@@ -457,7 +503,6 @@ static void reader_thread(std::string path_to_mem_trace){
                 it_cv.wait(lk,[total_nm_processes](){return num_ready==total_nm_processes;});
             }
         }
-out:
         f.close();
     }
     continue_running = false;
@@ -467,12 +512,42 @@ out:
         it_cv.notify_all();
         it_cv.wait(lk,[total_nm_processes](){return num_ready==total_nm_processes;});
     }
+    std::ofstream u_p_file(parent_dir+"n_unique_pages");
+    if (u_p_file.is_open()) {
+        u_p_file << unique_pages.size();
+        u_p_file.close();
+    }
 }
 
 static const std::string KERNEL_PREFIX = "kernel/";
 static const std::string USERSPACE_PREFIX = "userspace/";
 
 void start(const Args& args, const std::unordered_map<std::string, json>& db) {
+
+#ifdef SERVER
+    int fd = open(args.mem_trace_path.c_str(), O_RDONLY);
+    if (fd == -1){
+        std::cout<<"Couldn't syscall open the file"<<std::endl;
+        return;
+    }
+
+    // obtain file size
+    struct stat sb;
+    if (fstat(fd, &sb) == -1){
+        std::cout<<"Couldn't fstat the file"<<std::endl;
+        close(fd);
+        return;
+    }
+    auto length = sb.st_size;
+    const char* addr = static_cast<const char*>(mmap(nullptr, length, PROT_READ, MAP_PRIVATE, fd, 0u));
+
+    close(fd); // man 2 mmap : "After the mmap() call has returned, the file  descriptor,  fd,  can  be closed immediately without invalidating the mapping."
+    if (addr == MAP_FAILED){
+        std::cout<<"Couldn't mmap the file"<<std::endl;
+        return;
+    }
+    std::cout<<"Successfully mmaped the mem_trace, proceeding"<<std::endl;
+#endif
 
     constexpr std::array samples_div = {REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO,
                                   AVERAGE_SAMPLE_RATIO,
@@ -499,26 +574,45 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
                 fs::create_directories(path);
                 auto save_dir = fs::absolute(path).lexically_normal().string() + '/';
                 ThreadWorkAlgs t{{alg,div}, save_dir, NO_RATIO, is_userspace};
-                all_threads.emplace_back(simulate_one,std::ref(it_barrier),t);
+                all_threads.emplace_back(simulate_one,
+#ifdef SERVER
+                                         addr, length,
+#else
+                                         std::ref(it_barrier),
+#endif
+                                         t);
                 if(div == REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO) {
                     //Also create a Ratio thread
                     auto path_r = fs::path(base_dir_posix + kernel_uspace_str + get_alg_div_name(alg,div)+"_R");
                     fs::create_directories(path_r);
                     auto save_dir_r = fs::absolute(path_r).lexically_normal().string() + '/';
                     ThreadWorkAlgs t_r{{alg,div}, save_dir_r, ratio, is_userspace};
-                    all_threads.emplace_back(simulate_one,std::ref(it_barrier),t_r);
+                    all_threads.emplace_back(simulate_one,
+#ifdef SERVER
+                                            addr, length,
+#else
+                                             std::ref(it_barrier),
+#endif
+                                             t_r);
                 }
             }
         }
     }
 
-    std::jthread reader(reader_thread,args.mem_trace_path);
+#ifndef SERVER
+    std::jthread reader(reader_thread,args.mem_trace_path,base_dir_posix);
 
     reader.join();
+#endif
 
     for(auto& t : all_threads){
         t.join();
     }
+#ifdef SERVER
+    auto ret = munmap((void *) addr, length);
+    if(ret)
+        std::cout<<"Couldn't munmap the file..."<<std::endl;
+#endif
 
     std::cout<<"Got all data!"<<std::endl;
 }
