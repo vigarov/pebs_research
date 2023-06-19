@@ -19,11 +19,11 @@
 #include "tests/cprng.h"
 #include <random>
 #include "tests/test.h"
+#include "algorithms/LRU.h"
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
-static constexpr uint8_t K = 2;
 static constexpr size_t MAX_PAGE_CACHE_SIZE = 507569; // pages = `$ ulimit -l`/4  ~= 2GB mem
 static constexpr size_t page_cache_size = 256*1024; // ~ 128 KB mem
 static constexpr size_t LINE_SIZE_BYTES = 16; // "W0x7fffffffd9a8\n"*1 (===sizeof(char))
@@ -175,9 +175,9 @@ namespace page_cache_algs {
     std::unique_ptr<GenericAlgorithm> get_alg(type t){
         switch(t){
             case LRU_t:
-                return std::make_unique<LRU_K>(page_cache_size,K);
+                return std::make_unique<LRU>(page_cache_size);
             case GCLOCK_t:
-                return std::make_unique<CLOCK>(page_cache_size,K);
+                return std::make_unique<CLOCK>(page_cache_size,1);
             case ARC_t:
                 return std::make_unique<ARC>(page_cache_size);
             case CAR_t:
