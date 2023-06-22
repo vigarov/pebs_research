@@ -695,7 +695,7 @@ template<typename It>
 size_t indexof(It start, It end, double value) { return std::distance(start, std::find(start, end, value)); }
 
 #define TESTING 0
-#define JUST_DB 1
+#define JUST_DB 0
 
 int main(int argc, char* argv[]) {
     const Args args(argc, argv);
