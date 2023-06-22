@@ -25,6 +25,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <cstdio>
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -37,16 +38,17 @@ static constexpr size_t page_cache_size = 8*1024*1024; // ~ 128 KB mem
 #else
 static constexpr size_t page_cache_size = 256*1024; // ~ 128 KB mem
 #endif
-static constexpr size_t LINE_SIZE_BYTES = 16; // "W0x7fffffffd9a8\n"*1 (===sizeof(char))
+static constexpr size_t TEXT_LINE_SIZE_BYTES = 16; // "W0x7fffffffd9a8\n"*1 (===sizeof(char))
+static constexpr size_t BIN_ADDR_BYTES = 8;
+static constexpr size_t BIN_RW_BYTES = 1;
+static constexpr size_t BIN_LINE_SIZE_BYTES = BIN_ADDR_BYTES+BIN_RW_BYTES; // "W0x7fffffffd9a8\n"*1 (===sizeof(char))
 
 static const size_t max_num_threads = std::thread::hardware_concurrency();
 static const size_t num_array_comp_threads = (max_num_threads > 16 ? max_num_threads/4 : 2);
 
-std::string dtos(double f, uint8_t nd) {
-    std::ostringstream ostr;
+static double round_to_precision(double f, uint8_t nd){
     const auto tens = static_cast<double>(std::pow(10,nd));
-    ostr << std::round(f*tens)/tens;
-    return ostr.str();
+    return std::round(f*tens)/tens;
 }
 
 struct Args {
@@ -55,6 +57,7 @@ struct Args {
     bool always_overwrite = false;
     std::string data_save_dir = "results/%mtp/%tst";
     std::string mem_trace_path;
+    bool text_trace_format = false;
 
     Args(int argc, char* argv[]) {
         int i = 1;
@@ -68,6 +71,8 @@ struct Args {
                 always_overwrite = true;
             } else if (arg == "--data-save-dir") {
                 data_save_dir = argv[i++];
+            } else if(arg == "-o" || arg == "--old-trace"){
+                text_trace_format = true;
             } else if (i == argc) {
                 mem_trace_path = arg;
             } else {
@@ -154,21 +159,48 @@ std::unordered_map<std::string, json> populate_or_get_db(const Args& args) {
     const std::string full_path = args.mem_trace_path;
     in_file = db.contains(full_path);
     if (!in_file) {
-        std::ifstream mtf(full_path);
+        std::ios::openmode mt_mode = std::ios::out;
+        if(!args.text_trace_format) mode |= std::ios::binary;
+        std::ifstream mtf(full_path,mt_mode);
         if (!mtf.is_open()) {
             std::cerr << "Failed to open memory trace file" << std::endl;
             exit(-1);
         }
-        int lds = 0, strs = 0;
+        uint64_t lds = 0, strs = 0;
         std::string line;
-        while (std::getline(mtf, line)) {
-            if (line[0] == 'R') {
+
+
+        std::function<bool(std::string&)> read;
+        std::function<std::pair<uint8_t,uint64_t>(std::string&)> parse;
+
+        if(args.text_trace_format) {
+            read = [&mtf](std::string &line) { return bool(std::getline(mtf, line)); };
+            parse = [](std::string &line){
+                const uint8_t is_load = line[0]=='R';
+                const uint64_t mem_address = std::stoull(line.substr(1), nullptr, 16);
+                return std::pair{is_load,mem_address};
+            };
+        }else {
+            read = [&mtf](std::string &line) { return bool(mtf.read(&line[0], BIN_LINE_SIZE_BYTES)); };
+            parse = [](std::string &line){
+                const uint8_t is_load = line[0]==0;
+                const uint64_t mem_address = 0;
+                memcpy((void *) &mem_address, &line[1], sizeof(uint64_t));
+                return std::pair{is_load,mem_address};
+            };
+        }
+
+        std::unordered_set<page_t> all_pages;
+        while (read(line)) {
+            auto[is_load,address] = parse(line);
+            if (is_load) {
                 lds += 1;
             } else {
                 strs += 1;
             }
+            all_pages.insert(page_start_from_mem_address(address));
         }
-        db[full_path] = {{"loads", lds}, {"stores", strs}, {"ratio", dtos(static_cast<double>(lds)/static_cast<double>(strs),4)}, {"count", lds + strs}};
+        db[full_path] = {{"loads", lds}, {"stores", strs}, {"ratio", round_to_precision(static_cast<double>(lds)/static_cast<double>(strs),4)}, {"count", lds + strs},{"n_unique",all_pages.size()}};
         dbf.seekp(0);
         dbf << db.dump();
     }
@@ -207,7 +239,7 @@ typedef std::pair<const page_cache_algs::type,double> compared_t;
 typedef std::pair<compared_t,compared_t> comparison_t;
 
 
-static inline std::string get_alg_div_name(page_cache_algs::type t,double div) {return page_cache_algs::alg_to_name(t)+'_'+ dtos(div, ALG_DIV_PRECISION);}
+static inline std::string get_alg_div_name(page_cache_algs::type t,double div) {return page_cache_algs::alg_to_name(t)+'_'+ std::to_string(round_to_precision(div, ALG_DIV_PRECISION));}
 static inline std::string get_alg_div_name(compared_t ct){return get_alg_div_name(ct.first,ct.second);}
 
 static const std::string NO_STANDALONE = "!";
@@ -320,6 +352,7 @@ static void simulate_one(
 #ifdef SERVER
         const char* mmap_file_address,
         size_t total_length,
+        bool text_trace_format,
 #else
         std::barrier<>& it_barrier,
 #endif
@@ -335,6 +368,32 @@ static void simulate_one(
     while(true){
 #else
     size_t at = 0;
+    std::function<std::tuple<bool,uint8_t,uint64_t>()> parse;
+    if(text_trace_format){
+        parse = [mmap_file_address,&at,tid](){
+            auto is_load = mmap_file_address[at++] == 'R';
+            char* str_end = nullptr;
+            auto address = std::strtoull(mmap_file_address+at,&str_end,16);
+            bool success = true;
+            if (errno == ERANGE)
+            {
+                errno = 0;
+                std::cout << tid << " - range error, exiting";
+                success = false;
+            }
+            at += (str_end+1-(mmap_file_address+at)); //`+1` skips the \n
+            return std::tuple{success,is_load,address};
+        };
+    }
+    else{
+        parse = [mmap_file_address,&at](){
+            auto is_load = mmap_file_address[at++] == 0;
+            const uint64_t mem_address = 0;
+            memcpy((void *) &mem_address, mmap_file_address+at, sizeof(uint64_t));
+            at += sizeof(uint64_t);
+            return std::tuple{true,is_load,mem_address};
+        };
+    }
     while(at < total_length){
 #endif
 #ifndef SERVER
@@ -353,17 +412,8 @@ static void simulate_one(
             auto page_base = page_start_from_mem_address(mem_address_buf[i]);
             auto is_load = mem_reqtype_buf[i];
 #else
-
-            auto is_load = mmap_file_address[at++] == 'R';
-            char* str_end = nullptr;
-            auto address = std::strtoull(mmap_file_address+at,&str_end,16);
-            if (errno == ERANGE)
-            {
-                errno = 0;
-                std::cout << tid << " - range error, exiting";
-                break;
-            }
-            at += (str_end+1-(mmap_file_address+at)); //`+1` skips the \n
+            const auto[parse_success,is_load,address] = parse();
+            if(!parse_success) break;
             auto page_base = page_start_from_mem_address(address);
 #endif
 
@@ -433,15 +483,38 @@ static void simulate_one(
 }
 
 
-static bool fill_array_and_updated_page_set(std::ifstream& f,std::unordered_set<page_t>& unique_pages){
+static bool fill_array_and_updated_page_set(std::ifstream& f,std::unordered_set<page_t>& unique_pages,bool text_trace_format){
     size_t i = 0;
-    for(std::string line; i<BUFFER_SIZE && std::getline(f,line);i++){
-        const uint8_t is_load = line[0]=='R';
-        const uint64_t mem_address = std::stoull(line.substr(1), nullptr, 16);
-        const page_t page_start = page_start_from_mem_address(mem_address);
+    std::string line;
+    line.resize(BIN_LINE_SIZE_BYTES);
+
+    std::function<bool(std::string&)> read;
+    std::function<std::pair<uint8_t,uint64_t>(std::string&)> parse;
+
+    if(text_trace_format) {
+        read = [&f](std::string &line) { return bool(std::getline(f, line)); };
+        parse = [](std::string &line){
+            const uint8_t is_load = line[0]=='R';
+            const uint64_t mem_address = std::stoull(line.substr(1), nullptr, 16);
+            return std::pair{is_load,mem_address};
+        };
+    }else {
+        read = [&f](std::string &line) { return bool(f.read(&line[0], BIN_LINE_SIZE_BYTES)); };
+        parse = [](std::string &line){
+            const uint8_t is_load = line[0]==0;
+            const uint64_t mem_address = 0;
+            memcpy((void *) &mem_address, &line[1], sizeof(uint64_t));
+            return std::pair{is_load,mem_address};
+        };
+    }
+
+
+    for(; i<BUFFER_SIZE && read(line); i++){
+        auto parsed = parse(line);
+        const page_t page_start = page_start_from_mem_address(parsed.second);
         unique_pages.insert(page_start);
         mem_address_buf[i] = (uint64_t)page_start;
-        mem_reqtype_buf[i] = is_load;
+        mem_reqtype_buf[i] = parsed.first;
     }
     return i==BUFFER_SIZE;
 }
@@ -449,13 +522,14 @@ static bool fill_array_and_updated_page_set(std::ifstream& f,std::unordered_set<
 //#define BIGSKIP 7228143
 #ifdef BIGSKIP
 #define RELAX_NUM_LINES 1000
-static const unsigned long long SKIP_OFF = (BIGSKIP-RELAX_NUM_LINES)*LINE_SIZE_BYTES;
 #endif
 
-static void reader_thread(std::string path_to_mem_trace,std::string parent_dir){
+static void reader_thread(std::string path_to_mem_trace,std::string parent_dir, bool text_trace_format){
     const auto total_nm_processes = num_ready;
     const std::string id_str = "READER PROCESS -";
-    std::ifstream f(path_to_mem_trace);
+    std::ios::openmode mode = std::ios::out;
+    if(!text_trace_format) mode |= std::ios::binary;
+    std::ifstream f(path_to_mem_trace,mode);
     std::unordered_set<page_t> unique_pages{};
 #ifdef SERVER
     auto stop_condition = [](size_t read){return read>510'000'000;};
@@ -467,7 +541,7 @@ static void reader_thread(std::string path_to_mem_trace,std::string parent_dir){
         //After analysis, a new unique page for this benchmark arrives every ~2000 mem accesses before access number
         // 7228143 and every 50 accesses afterwards. To skip this big uninteresting area of 7 million memory accesses,
         // we simply seek a little ahead in the file
-        auto left_to_skip = SKIP_OFF;
+        auto left_to_skip = (BIGSKIP-RELAX_NUM_LINES)*(text_trace_format ? TEXT_LINE_SIZE_BYTES : BIN_LINE_SIZE_BYTES;
         f.seekg(0,std::ios_base::end);
         std::cout<<"Total size=" <<f.tellg()<<std::endl;
         f.seekg(0,std::ios_base::beg);
@@ -482,7 +556,7 @@ static void reader_thread(std::string path_to_mem_trace,std::string parent_dir){
         size_t n = 0,total_read = 0;
         while(!stop_condition(total_read)){
             //Get new data
-            if(fill_array_and_updated_page_set(f,unique_pages)){
+            if(fill_array_and_updated_page_set(f,unique_pages,text_trace_format)){
                 total_read+=BUFFER_SIZE;
             }
             else{
@@ -576,7 +650,7 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
                 ThreadWorkAlgs t{{alg,div}, save_dir, NO_RATIO, is_userspace};
                 all_threads.emplace_back(simulate_one,
 #ifdef SERVER
-                                         addr, length,
+                                         addr, length,args.text_trace_format,
 #else
                                          std::ref(it_barrier),
 #endif
@@ -589,7 +663,7 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
                     ThreadWorkAlgs t_r{{alg,div}, save_dir_r, ratio, is_userspace};
                     all_threads.emplace_back(simulate_one,
 #ifdef SERVER
-                                            addr, length,
+                                            addr, length,args.text_trace_format,
 #else
                                              std::ref(it_barrier),
 #endif
@@ -600,7 +674,7 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
     }
 
 #ifndef SERVER
-    std::jthread reader(reader_thread,args.mem_trace_path,base_dir_posix);
+    std::jthread reader(reader_thread,args.mem_trace_path,base_dir_posix,args.text_trace_format);
 
     reader.join();
 #endif
@@ -621,10 +695,14 @@ template<typename It>
 size_t indexof(It start, It end, double value) { return std::distance(start, std::find(start, end, value)); }
 
 #define TESTING 0
+#define JUST_DB 1
 
 int main(int argc, char* argv[]) {
     const Args args(argc, argv);
     auto db = populate_or_get_db(args);
+#if JUST_DB
+    return 0;
+#endif
 #if (BUILD_TYPE==0 && TESTING == 1)
     test_latest(args.mem_trace_path);
 #else
