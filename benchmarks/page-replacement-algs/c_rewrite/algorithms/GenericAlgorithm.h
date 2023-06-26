@@ -159,18 +159,13 @@ private:
 template<typename T>
 class SimpleContainer{
 public:
-    SimpleContainer(){
-        std::random_device dev;
-        rng = std::mt19937(dev());
-    }
+    SimpleContainer() = default;
     virtual ~SimpleContainer() = default;
     virtual bool contains(const T& element) = 0;
     virtual bool insert(const T& element) = 0;
     virtual bool erase(const T& element) = 0;
     virtual bool evict() = 0;
     virtual size_t size() = 0;
-protected:
-    std::mt19937 rng;
 };
 
 
@@ -183,7 +178,10 @@ struct __attribute__((packed)) RandomSetInfo{
 template<typename T>
 class RandomSet : public SimpleContainer<T>{
 public:
-    RandomSet()= default;
+    RandomSet(){
+        std::random_device dev;
+        rng = std::mt19937(dev());
+    }
     bool contains(const T& element) override{
         return elem_info.contains(element);
     };
@@ -214,7 +212,7 @@ public:
         auto elem_size =elems.size();
         if(elem_size == 0) return false;
         std::uniform_int_distribution<std::mt19937::result_type> dist(0,elem_size-1);
-        ret = elems[dist(this->rng)];
+        ret = elems[dist(rng)];
         if(andErase) erase(ret);
         return true;
     };
@@ -229,6 +227,7 @@ public:
 private:
     std::unordered_map<T,RandomSetInfo> elem_info;
     std::vector<T> elems;
+    std::mt19937 rng;
 };
 
 template<typename T>

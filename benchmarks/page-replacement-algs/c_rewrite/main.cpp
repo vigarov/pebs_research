@@ -32,7 +32,7 @@ namespace fs = std::filesystem;
 
 static constexpr size_t MAX_PAGE_CACHE_SIZE = 507569; // pages = `$ ulimit -l`/4  ~= 2GB mem
 #ifdef SERVER
-static constexpr size_t page_cache_size = 8*1024*1024; // ~ 128 KB mem
+static constexpr size_t page_cache_size = 32*1024; // ~ 128 KB mem
 #else
 static constexpr size_t max_page_cache_size = 256*1024; // ~ 128 KB mem
 #endif
@@ -47,6 +47,20 @@ static const size_t num_array_comp_threads = (max_num_threads > 16 ? max_num_thr
 static double round_to_precision(double f, uint8_t nd){
     const auto tens = static_cast<double>(std::pow(10,nd));
     return std::round(f*tens)/tens;
+}
+
+static std::string parseMemorySize(size_t num) {
+    const auto units = std::array{"B", "KB", "MB", "GB", "TB"};
+    size_t unitIndex = 0;
+
+    while (num >= 1024 && unitIndex < (units.size() - 1)) {
+        num /= 1024;
+        unitIndex++;
+    }
+
+    std::ostringstream oss;
+    oss << num << units[unitIndex];
+    return oss.str();
 }
 
 struct Args {
@@ -92,12 +106,23 @@ struct Args {
             mem_trace_path = fs::absolute(mem_trace_path_fs).lexically_normal().string();
         }
 
-        const std::vector<std::string> KNOWN_BENCHMARKS = {"pmbench", "stream"};
         std::string bm_name = "unknown";
+        const std::vector<std::string> KNOWN_BENCHMARKS = {"pmbench", "stream"};
+        auto changed= false;
         for (const auto& bm : KNOWN_BENCHMARKS) {
             if (mem_trace_path_fs.native().find(bm) != std::string::npos) {
                 bm_name = bm;
+                changed = true;
                 break;
+            }
+        }
+        if(!changed) {
+            const std::vector<std::string> KNOWN_PARSEC_BENCHMARKS = {"ferret"};
+            for (const auto &bm: KNOWN_PARSEC_BENCHMARKS) {
+                if (mem_trace_path_fs.native().find(bm) != std::string::npos) {
+                    bm_name = "parsec\\"+bm;
+                    break;
+                }
             }
         }
 
@@ -127,7 +152,18 @@ struct Args {
         data_save_dir = fs::absolute(data_save_dir_fs).lexically_normal().string();
         db_file = fs::absolute(db_file).lexically_normal().string();
         fs::create_directories(fs::path(db_file).parent_path());
-    }
+
+        //Add 'memory.txt'
+        std::ofstream mem_file(data_save_dir+"/memory.txt");
+        if(mem_file.is_open()) {
+            mem_file << "memory_used=" << parseMemorySize(page_cache_size) << "pages=" << parseMemorySize(page_cache_size*PAGE_SIZE) << "memory";
+            mem_file.close();
+        }
+        else{
+            std::cerr<<"Couldn't create memory.txt file!" <<std::endl;
+            exit(-1);
+        }
+    };
 };
 
 std::unordered_map<std::string, json> populate_or_get_db(const Args& args) {
@@ -241,12 +277,10 @@ static inline std::string get_alg_div_name(page_cache_algs::type t,double div) {
 static inline std::string get_alg_div_name(compared_t ct){return get_alg_div_name(ct.first,ct.second);}
 
 static const std::string NO_STANDALONE = "!";
-static constexpr double NO_RATIO = -1;
 
 struct ThreadWorkAlgs{
     const compared_t alg_info;
     std::string save_dir = NO_STANDALONE;
-    const double ratio;
     const untracked_eviction::type untracked_eviction_alg;
 };
 
@@ -268,7 +302,7 @@ std::array<uint8_t,BUFFER_SIZE> mem_reqtype_buf{};
 
 struct AlgInThread;
 
-typedef bool (*consideration_method)(uint8_t is_page_fault, const AlgInThread& alg,size_t seen,uint8_t is_load);
+typedef bool (*consideration_method)(const AlgInThread& alg,size_t seen);
 
 typedef std::pair<uint64_t,uint64_t> temperature_change_log;
 typedef std::vector<temperature_change_log> temp_log_t;
@@ -287,30 +321,15 @@ namespace consideration_methods{
         return (static_cast<double>(alg.considered_loads + alg.considered_stores) / static_cast<double>(seen)) <= alg.twa.alg_info.second;
     }
 
-    static inline bool consider_ratio(const AlgInThread &alg, uint8_t is_load) {
-        return alg.considered_stores == 0
-            || (is_load && ((static_cast<double>(alg.considered_loads) / static_cast<double>(alg.considered_stores)) <= alg.twa.ratio))
-               || (!is_load && (alg.twa.ratio <= (static_cast<double>(alg.considered_loads) / static_cast<double>(alg.considered_stores))));
-    }
-
     static inline bool
-    should_consider_div_uspace(uint8_t is_page_fault, const AlgInThread &alg, size_t seen, uint8_t is_load) {
-        (void) is_load;
-        (void) is_page_fault;
+    should_consider_div_uspace(const AlgInThread &alg, size_t seen) {
         return consider_div(alg, seen);
     }
 
-    static inline bool
-    should_consider_ratio_uspace(uint8_t is_page_fault, const AlgInThread &alg, size_t seen, uint8_t is_load) {
-        return should_consider_div_uspace(is_page_fault, alg, seen, is_load) && consider_ratio(alg, is_load);
-    }
-
-    static constexpr consideration_method all[2] = {should_consider_div_uspace, should_consider_ratio_uspace};
-
-
-    static consideration_method get_consideration_method(bool is_ratio){
-        return all[is_ratio];
-    }
+    static inline bool never_consider(const AlgInThread &alg, size_t seen){
+        (void)alg;
+        (void)seen;
+        return false;}
 }
 
 
@@ -346,7 +365,9 @@ static void simulate_one(
     size_t n_writes = 0,seen = 0;
     //Create algs
 
-    AlgInThread ait = {.alg=page_cache_algs::get_alg(twa.alg_info.first,twa.untracked_eviction_alg),.considerationMethod=consideration_methods::get_consideration_method(twa.ratio!=NO_RATIO),.twa=std::move(twa)};
+    AlgInThread ait = {.alg=page_cache_algs::get_alg(twa.alg_info.first,twa.untracked_eviction_alg),
+                       .considerationMethod=twa.alg_info.second==0.?consideration_methods::never_consider:consideration_methods::should_consider_div_uspace,
+                       .twa=std::move(twa)};
     std::cout << tid << ": Waiting for first fill and starting..." << std::endl;
 
 #ifndef SERVER
@@ -379,6 +400,8 @@ static void simulate_one(
             return std::tuple{true,is_load,mem_address};
         };
     }
+    auto should_break = (round_to_precision(ait.twa.alg_info.second,2 )== 1.) && (ait.twa.alg_info.first == page_cache_algs::LRU_t) && (ait.twa.save_dir.find("fifo") != std::string::npos);
+
     while(at < total_length){
 #endif
 #ifndef SERVER
@@ -409,10 +432,6 @@ static void simulate_one(
                    << "SampleRate=" << ait.twa.alg_info.second << ",#T="
                    << ait.considered_loads + ait.considered_stores << " (#S="
                    << ait.considered_stores << ",#L=" << ait.considered_loads;
-                if (ait.twa.ratio != NO_RATIO) {
-                    ss << ", gt_ratio=" << ait.twa.ratio
-                       << ", curr_ratio=" << (static_cast<double>(ait.considered_loads) / static_cast<double>(ait.considered_stores));
-                }
                 ss << "), n_writes=" << n_writes <<
 #ifndef SERVER
                 ",i=" << i;
@@ -427,8 +446,7 @@ static void simulate_one(
                 ait.n_pfaults++;
             }
 
-            //auto should_break = (alg.twa.alg_info.second == 1) && (alg.twa.standalone_save_dir != NO_STANDALONE) && (alg.twa.alg_info.first == page_cache_algs::LRU_t);
-            if(ait.considerationMethod(pfault,ait,seen,is_load)){
+            if(ait.considerationMethod(ait,seen)){
                 if(is_load){
                     ait.considered_loads++;
                 }else{
@@ -437,11 +455,16 @@ static void simulate_one(
                 if(pfault){
                     ait.considered_pfaults++;
                 }
+
+                if(should_break && (ait.alg->get_total_size() == ait.alg->get_max_page_cache_size())){
+                    size_t test = 0;
+                }
                 ait.changed = ait.alg->consume(page_base,true);
             }
-            else{
+            else if(pfault){
                 ait.changed = ait.alg->consume(page_base,false);
             }
+            //else no need to add to U, since we don't have a page fault
             //Sanity check
             if(ait.alg->get_total_size() > ait.alg->get_max_page_cache_size()){
                 std::cerr<< get_alg_div_name(ait.twa.alg_info) <<" - Max memory exceeded!"<<std::endl;
@@ -589,7 +612,7 @@ static void reader_thread(std::string path_to_mem_trace,std::string parent_dir, 
 }
 
 
-void start(const Args& args, const std::unordered_map<std::string, json>& db) {
+void start(const Args& args) {
 
 #ifdef SERVER
     int fd = open(args.mem_trace_path.c_str(), O_RDONLY);
@@ -616,7 +639,7 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
     std::cout<<"Successfully mmaped the mem_trace, proceeding"<<std::endl;
 #endif
 
-    constexpr std::array samples_div = {REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO,
+    constexpr std::array samples_div = {0.,REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO,
                                   AVERAGE_SAMPLE_RATIO,
                                   0.2,0.4,0.6,0.8,1.0};
 
@@ -631,8 +654,6 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
     std::vector<std::jthread> all_threads{};
     all_threads.reserve(num_comp_processes);
 
-    const auto ratio = db.at(args.mem_trace_path).at("ratio").get<double>();
-
     for(auto u_eviction_type : untracked_eviction::all) {
         const auto prefix = untracked_eviction::get_prefix(u_eviction_type)+"/";
         for (auto &div: samples_div) {
@@ -640,7 +661,7 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
                 auto path = fs::path(base_dir_posix + prefix + get_alg_div_name(alg,div));
                 fs::create_directories(path);
                 auto save_dir = fs::absolute(path).lexically_normal().string() + '/';
-                ThreadWorkAlgs t{{alg,div}, save_dir, NO_RATIO,u_eviction_type};
+                ThreadWorkAlgs t{{alg,div}, save_dir,u_eviction_type};
                 all_threads.emplace_back(simulate_one,
 #ifdef SERVER
                                          addr, length,args.text_trace_format,
@@ -648,20 +669,6 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
                                          std::ref(it_barrier),
 #endif
                                          t);
-                if(div == REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO) {
-                    //Also create a Ratio thread
-                    auto path_r = fs::path(base_dir_posix + prefix + get_alg_div_name(alg,div)+"_R");
-                    fs::create_directories(path_r);
-                    auto save_dir_r = fs::absolute(path_r).lexically_normal().string() + '/';
-                    ThreadWorkAlgs t_r{{alg,div}, save_dir_r, ratio,u_eviction_type};
-                    all_threads.emplace_back(simulate_one,
-#ifdef SERVER
-                                            addr, length,args.text_trace_format,
-#else
-                                             std::ref(it_barrier),
-#endif
-                                             t_r);
-                }
             }
         }
     }
@@ -693,13 +700,14 @@ size_t indexof(It start, It end, double value) { return std::distance(start, std
 int main(int argc, char* argv[]) {
     const Args args(argc, argv);
     auto db = populate_or_get_db(args);
+    (void)db;
 #if JUST_DB
     return 0;
 #endif
 #if (BUILD_TYPE==0 && TESTING == 1)
     test_latest(args.mem_trace_path);
 #else
-    start(args,db);
+    start(args);
 #endif
     return 0;
 }
