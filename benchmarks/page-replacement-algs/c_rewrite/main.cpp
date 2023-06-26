@@ -32,7 +32,7 @@ namespace fs = std::filesystem;
 
 static constexpr size_t MAX_PAGE_CACHE_SIZE = 507569; // pages = `$ ulimit -l`/4  ~= 2GB mem
 #ifdef SERVER
-static constexpr size_t page_cache_size = 32*1024; // ~ 128 KB mem
+static constexpr size_t page_cache_size = 8*1024*1024; // ~ 128 KB mem
 #else
 static constexpr size_t max_page_cache_size = 256*1024; // ~ 128 KB mem
 #endif
@@ -400,7 +400,7 @@ static void simulate_one(
             return std::tuple{true,is_load,mem_address};
         };
     }
-    auto should_break = (round_to_precision(ait.twa.alg_info.second,2 )== 1.) && (ait.twa.alg_info.first == page_cache_algs::LRU_t) && (ait.twa.save_dir.find("fifo") != std::string::npos);
+    // auto should_break = (round_to_precision(ait.twa.alg_info.second,2 )== 1.) && (ait.twa.alg_info.first == page_cache_algs::LRU_t) && (ait.twa.save_dir.find("fifo") != std::string::npos);
 
     while(at < total_length){
 #endif
@@ -456,9 +456,9 @@ static void simulate_one(
                     ait.considered_pfaults++;
                 }
 
-                if(should_break && (ait.alg->get_total_size() == ait.alg->get_max_page_cache_size())){
-                    size_t test = 0;
-                }
+                // if(should_break && (ait.alg->get_total_size() == ait.alg->get_max_page_cache_size())){
+                //     size_t test = 0;
+                // }
                 ait.changed = ait.alg->consume(page_base,true);
             }
             else if(pfault){
