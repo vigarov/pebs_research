@@ -1,16 +1,16 @@
 #include "LRU_K.h"
 
-bool LRU_K::consume(page_t page_start){
+bool LRU_K::consume_tracked(page_t page_start){
     bool changed = true;
     count_stamp+=1;
-    auto page_fault = is_page_fault(page_start);
+    auto page_fault = is_tracked_page_fault(page_start); //TODO
     auto& page_data_internal = page_to_data_internal[page_start];
     auto& histories = page_data_internal.history;
     //For K!=2, if(histories.size() != K) {/*set K empty elements*/}
     histories.pop_back();
     histories.push_front(count_stamp);
     if(page_fault){
-        if(page_cache.size()==page_cache_size) { //Full, must replace
+        if(page_cache.size() == max_page_cache_size) { //Full, must replace
             auto victim_page_it = std::prev(page_cache.end());
             auto modify = latest_first_access_page == victim_page_it;
             page_to_data_internal.erase(*victim_page_it);

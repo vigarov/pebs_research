@@ -3,13 +3,13 @@
 #include <fstream>
 #include <ctime>
 #include <filesystem>
-#include <algorithm>
 #include <regex>
 #include "nlohmann/json.hpp"
 #include "algorithms/LRU_K.h"
 #include "algorithms/CLOCK.h"
 #include "algorithms/ARC.h"
 #include "algorithms/CAR.h"
+#include "algorithms/LRU.h"
 //Threading
 #include <thread>
 #include <barrier>
@@ -19,13 +19,11 @@
 #include "tests/cprng.h"
 #include <random>
 #include "tests/test.h"
-#include "algorithms/LRU.h"
 #include <unordered_set>
 
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/mman.h>
-#include <cstdio>
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -36,7 +34,7 @@ static constexpr size_t MAX_PAGE_CACHE_SIZE = 507569; // pages = `$ ulimit -l`/4
 #ifdef SERVER
 static constexpr size_t page_cache_size = 8*1024*1024; // ~ 128 KB mem
 #else
-static constexpr size_t page_cache_size = 256*1024; // ~ 128 KB mem
+static constexpr size_t max_page_cache_size = 256*1024; // ~ 128 KB mem
 #endif
 static constexpr size_t TEXT_LINE_SIZE_BYTES = 16; // "W0x7fffffffd9a8\n"*1 (===sizeof(char))
 static constexpr size_t BIN_ADDR_BYTES = 8;
@@ -218,28 +216,28 @@ static constexpr const int ALG_DIV_PRECISION = 2;
 namespace page_cache_algs {
     enum type {LRU_t, GCLOCK_t, ARC_t, CAR_t, NUM_ALGS};
     static constexpr std::array all = {LRU_t, GCLOCK_t, ARC_t, CAR_t};
-    std::unique_ptr<GenericAlgorithm> get_alg(type t){
+    std::unique_ptr<GenericAlgorithm> get_alg(type t,untracked_eviction::type u_t){
         switch(t){
             case LRU_t:
-                return std::make_unique<LRU>(page_cache_size);
+                return std::make_unique<LRU>(page_cache_size,u_t);
             case GCLOCK_t:
-                return std::make_unique<CLOCK>(page_cache_size,1);
+                return std::make_unique<CLOCK>(page_cache_size,u_t,1);
             case ARC_t:
-                return std::make_unique<ARC>(page_cache_size);
+                return std::make_unique<ARC>(page_cache_size,u_t);
             case CAR_t:
-                return std::make_unique<CAR>(page_cache_size);
+                return std::make_unique<CAR>(page_cache_size,u_t);
             default:
                 return nullptr;
         }
     }
-    std::string alg_to_name(type t){return get_alg(t)->name();}
+    std::string type_to_alg_name(type t){return get_alg(t,untracked_eviction::FIFO /*here FIFO doesn't matter; we just use the name*/)->name();}
 }
 
 typedef std::pair<const page_cache_algs::type,double> compared_t;
 typedef std::pair<compared_t,compared_t> comparison_t;
 
 
-static inline std::string get_alg_div_name(page_cache_algs::type t,double div) {return page_cache_algs::alg_to_name(t)+'_'+ std::to_string(round_to_precision(div, ALG_DIV_PRECISION));}
+static inline std::string get_alg_div_name(page_cache_algs::type t,double div) {return page_cache_algs::type_to_alg_name(t)+'_'+ std::to_string(round_to_precision(div, ALG_DIV_PRECISION));}
 static inline std::string get_alg_div_name(compared_t ct){return get_alg_div_name(ct.first,ct.second);}
 
 static const std::string NO_STANDALONE = "!";
@@ -249,7 +247,7 @@ struct ThreadWorkAlgs{
     const compared_t alg_info;
     std::string save_dir = NO_STANDALONE;
     const double ratio;
-    uint8_t is_userspace = 0;
+    const untracked_eviction::type untracked_eviction_alg;
 };
 
 template<typename It>
@@ -289,22 +287,10 @@ namespace consideration_methods{
         return (static_cast<double>(alg.considered_loads + alg.considered_stores) / static_cast<double>(seen)) <= alg.twa.alg_info.second;
     }
 
-    static inline bool
-    should_consider_div_kernel(uint8_t is_page_fault, const AlgInThread &alg, size_t seen, uint8_t is_load) {
-        (void) is_load;
-        return is_page_fault || consider_div(alg, seen);
-    }
-
     static inline bool consider_ratio(const AlgInThread &alg, uint8_t is_load) {
         return alg.considered_stores == 0
             || (is_load && ((static_cast<double>(alg.considered_loads) / static_cast<double>(alg.considered_stores)) <= alg.twa.ratio))
                || (!is_load && (alg.twa.ratio <= (static_cast<double>(alg.considered_loads) / static_cast<double>(alg.considered_stores))));
-    }
-
-
-    static inline bool
-    should_consider_ratio_kernel(uint8_t is_page_fault, const AlgInThread &alg, size_t seen, uint8_t is_load) {
-        return should_consider_div_kernel(is_page_fault, alg, seen, is_load) && consider_ratio(alg, is_load);
     }
 
     static inline bool
@@ -319,12 +305,11 @@ namespace consideration_methods{
         return should_consider_div_uspace(is_page_fault, alg, seen, is_load) && consider_ratio(alg, is_load);
     }
 
-    static constexpr consideration_method all[2][2] = {{should_consider_div_kernel, should_consider_ratio_kernel},
-                                 {should_consider_div_uspace, should_consider_ratio_uspace}};
+    static constexpr consideration_method all[2] = {should_consider_div_uspace, should_consider_ratio_uspace};
 
 
-    static consideration_method get_consideration_method(bool is_userspace, bool is_ratio){
-        return all[is_userspace][is_ratio];
+    static consideration_method get_consideration_method(bool is_ratio){
+        return all[is_ratio];
     }
 }
 
@@ -361,7 +346,7 @@ static void simulate_one(
     size_t n_writes = 0,seen = 0;
     //Create algs
 
-    AlgInThread ait = {.alg=page_cache_algs::get_alg(twa.alg_info.first),.considerationMethod=consideration_methods::get_consideration_method(twa.is_userspace,twa.ratio!=NO_RATIO),.twa=std::move(twa)};
+    AlgInThread ait = {.alg=page_cache_algs::get_alg(twa.alg_info.first,twa.untracked_eviction_alg),.considerationMethod=consideration_methods::get_consideration_method(twa.ratio!=NO_RATIO),.twa=std::move(twa)};
     std::cout << tid << ": Waiting for first fill and starting..." << std::endl;
 
 #ifndef SERVER
@@ -437,6 +422,11 @@ static void simulate_one(
                 std::cout<<ss.str()<<std::endl;
             }
             auto pfault = ait.alg->is_page_fault(page_base);
+
+            if (pfault) {
+                ait.n_pfaults++;
+            }
+
             //auto should_break = (alg.twa.alg_info.second == 1) && (alg.twa.standalone_save_dir != NO_STANDALONE) && (alg.twa.alg_info.first == page_cache_algs::LRU_t);
             if(ait.considerationMethod(pfault,ait,seen,is_load)){
                 if(is_load){
@@ -444,14 +434,19 @@ static void simulate_one(
                 }else{
                     ait.considered_stores++;
                 }
-                ait.changed = ait.alg->consume(page_base);
                 if(pfault){
                     ait.considered_pfaults++;
                 }
+                ait.changed = ait.alg->consume(page_base,true);
             }
-            if (pfault) {
-                ait.n_pfaults++;
+            else{
+                ait.changed = ait.alg->consume(page_base,false);
             }
+            //Sanity check
+            if(ait.alg->get_total_size() > ait.alg->get_max_page_cache_size()){
+                std::cerr<< get_alg_div_name(ait.twa.alg_info) <<" - Max memory exceeded!"<<std::endl;
+            }
+
         } //endfor
 
         std::ofstream ofs(ait.twa.save_dir + OTHER_DATA_FN,std::ios_base::out|std::ios_base::trunc);
@@ -593,8 +588,6 @@ static void reader_thread(std::string path_to_mem_trace,std::string parent_dir, 
     }
 }
 
-static const std::string KERNEL_PREFIX = "kernel/";
-static const std::string USERSPACE_PREFIX = "userspace/";
 
 void start(const Args& args, const std::unordered_map<std::string, json>& db) {
 
@@ -640,14 +633,14 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
 
     const auto ratio = db.at(args.mem_trace_path).at("ratio").get<double>();
 
-    for(uint8_t is_userspace = 0; is_userspace <= 1 ; is_userspace++) {
-        const auto& kernel_uspace_str = is_userspace ? USERSPACE_PREFIX : KERNEL_PREFIX;
+    for(auto u_eviction_type : untracked_eviction::all) {
+        const auto prefix = untracked_eviction::get_prefix(u_eviction_type)+"/";
         for (auto &div: samples_div) {
             for (auto alg: page_cache_algs::all) {
-                auto path = fs::path(base_dir_posix + kernel_uspace_str + get_alg_div_name(alg,div));
+                auto path = fs::path(base_dir_posix + prefix + get_alg_div_name(alg,div));
                 fs::create_directories(path);
                 auto save_dir = fs::absolute(path).lexically_normal().string() + '/';
-                ThreadWorkAlgs t{{alg,div}, save_dir, NO_RATIO, is_userspace};
+                ThreadWorkAlgs t{{alg,div}, save_dir, NO_RATIO,u_eviction_type};
                 all_threads.emplace_back(simulate_one,
 #ifdef SERVER
                                          addr, length,args.text_trace_format,
@@ -657,10 +650,10 @@ void start(const Args& args, const std::unordered_map<std::string, json>& db) {
                                          t);
                 if(div == REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO) {
                     //Also create a Ratio thread
-                    auto path_r = fs::path(base_dir_posix + kernel_uspace_str + get_alg_div_name(alg,div)+"_R");
+                    auto path_r = fs::path(base_dir_posix + prefix + get_alg_div_name(alg,div)+"_R");
                     fs::create_directories(path_r);
                     auto save_dir_r = fs::absolute(path_r).lexically_normal().string() + '/';
-                    ThreadWorkAlgs t_r{{alg,div}, save_dir_r, ratio, is_userspace};
+                    ThreadWorkAlgs t_r{{alg,div}, save_dir_r, ratio,u_eviction_type};
                     all_threads.emplace_back(simulate_one,
 #ifdef SERVER
                                             addr, length,args.text_trace_format,

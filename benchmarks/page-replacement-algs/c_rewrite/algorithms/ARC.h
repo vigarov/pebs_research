@@ -9,10 +9,11 @@
 
 class ARC : public GenericAlgorithm{
 public:
-    explicit ARC(size_t page_cache_size) : GenericAlgorithm(page_cache_size){};
-    bool consume(page_t page_start) override;
-
-    inline bool is_page_fault(page_t page) const  override {return !page_to_data_internal.contains(page) || page_to_data_internal.at(page).in_list == B1 || page_to_data_internal.at(page).in_list == B2;};
+    explicit ARC(size_t page_cache_size,untracked_eviction::type evictionType) : GenericAlgorithm(page_cache_size,evictionType){};
+    bool consume_tracked(page_t page_start) override;
+    inline bool is_tracked_page_fault(page_t page) const  override {return !page_to_data_internal.contains(page) || page_to_data_internal.at(page).in_list == B1 || page_to_data_internal.at(page).in_list == B2;};
+    void evict_from_tracked() override;
+    size_t tracked_size() override{return caches[T1].size()+caches[T2].size();};
     std::string name() override {return "ARC";};
     std::unique_ptr<page_cache_copy_t> get_page_cache_copy() override;
     const dual_container_range<arc_cache_t>* get_cache_iterable() const {return &dcr;}

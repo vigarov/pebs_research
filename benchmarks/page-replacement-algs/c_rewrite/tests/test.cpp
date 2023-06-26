@@ -27,12 +27,12 @@
 
 static void test_ma_small(){
     int K = 2;
-    int page_cache_size = 3; // ~128 KB mem
+    int max_page_cache_size = 3; // ~128 KB mem
     std::vector<GenericAlgorithm*> const my_algs = {
-            new LRU_K(page_cache_size, K),
-            new CLOCK(page_cache_size, K),
-            new ARC(page_cache_size),
-            new CAR(page_cache_size)
+            new LRU_K(max_page_cache_size, K),
+            new CLOCK(max_page_cache_size, K),
+            new ARC(max_page_cache_size),
+            new CAR(max_page_cache_size)
     };
 
     std::vector<std::string> const test_accesses = {"W0x7fffffffd9a8", "W0x7fffffffd980", "W0x7ffff7ffde0e", "W0x7ffff7ffdb78",
@@ -59,12 +59,12 @@ static void test_ma_small(){
 
 static void test_ma_diverse(){
     int K = 2;
-    int page_cache_size = 3; // ~128 KB mem
+    int max_page_cache_size = 3; // ~128 KB mem
     std::vector<GenericAlgorithm*> const my_algs = {
-            new LRU_K(page_cache_size, K),
-            new CLOCK(page_cache_size, K),
-            new ARC(page_cache_size),
-            new CAR(page_cache_size)
+            new LRU_K(max_page_cache_size, K),
+            new CLOCK(max_page_cache_size, K),
+            new ARC(max_page_cache_size),
+            new CAR(max_page_cache_size)
     };
 
     std::vector<std::string> const test_accesses = {
@@ -93,12 +93,12 @@ static void test_ma_diverse(){
 
 static void test_ma_med(){
     int K = 2;
-    int page_cache_size = 3; // ~128 KB mem
+    int max_page_cache_size = 3; // ~128 KB mem
     std::vector<GenericAlgorithm*> const my_algs = {
-            new LRU_K(page_cache_size, K),
-            new CLOCK(page_cache_size, K),
-            new ARC(page_cache_size),
-            new CAR(page_cache_size)
+            new LRU_K(max_page_cache_size, K),
+            new CLOCK(max_page_cache_size, K),
+            new ARC(max_page_cache_size),
+            new CAR(max_page_cache_size)
     };
 
     std::vector<std::string> const test_accesses = {
@@ -233,7 +233,7 @@ struct BOOST_TEST_LRU_nd{
 namespace test {
     class BOOST_TEST_LRU {
     public:
-        explicit BOOST_TEST_LRU(uint16_t page_cache_size) : page_cache_size(page_cache_size) {};
+        explicit BOOST_TEST_LRU(uint16_t max_page_cache_size) : max_page_cache_size(max_page_cache_size) {};
 
         bool consume(page_t page_start) {
             bool changed = true;
@@ -246,7 +246,7 @@ namespace test {
             histories.pop_back();
             histories.push_front(count_stamp);
             if (page_fault) {
-                if (page_cache.size() == page_cache_size) { //Full, must replace
+                if (page_cache.size() == max_page_cache_size) { //Full, must replace
                     auto victim_page_it = std::prev(page_cache.end());
                     page_to_data.erase(*victim_page_it);
                     page_to_data_internal.erase(*victim_page_it);
@@ -318,7 +318,7 @@ namespace test {
         boost::unordered_flat_map<page_t, LRU_page_data> page_to_data;
         boost::unordered_flat_map<page_t,LRU_K_page_data_internal> page_to_data_internal;
         uint64_t count_stamp = 0;
-        const size_t page_cache_size;
+        const size_t max_page_cache_size;
 
         std::string cache_to_string(size_t num_elements) {
             if (num_elements > page_cache.size()) num_elements = page_cache.size();
@@ -343,14 +343,14 @@ namespace test {
     };
 }
 static void test_realistic(const std::string& path_to_mem_trace){
-    const size_t page_cache_size = 16*1024;
+    const size_t max_page_cache_size = 16*1024;
 
     std::ifstream f(path_to_mem_trace);
     if (f.is_open()) {
         std::string line;
         {
-            LRU_K normal_lru(page_cache_size,2);
-            test::BOOST_TEST_LRU test_lru(page_cache_size);
+            LRU_K normal_lru(max_page_cache_size,2);
+            test::BOOST_TEST_LRU test_lru(max_page_cache_size);
             auto start = std::chrono::system_clock::now();
             for (unsigned long long i = 0; i < 20 * FUZZ_SIZE; i++) {
                 std::getline(f, line);
@@ -383,8 +383,8 @@ static void test_realistic(const std::string& path_to_mem_trace){
         }
         f.seekg(0, std::ios_base::beg);
         {
-            LRU_K normal_lru(page_cache_size,2, TEST_NUM_THREADS);
-            test::BOOST_TEST_LRU test_lru(page_cache_size);
+            LRU_K normal_lru(max_page_cache_size,2, TEST_NUM_THREADS);
+            test::BOOST_TEST_LRU test_lru(max_page_cache_size);
             auto start = std::chrono::system_clock::now();
             for (unsigned long long i = 0; i < 20 * FUZZ_SIZE; i++) {
                 std::getline(f, line);
@@ -426,9 +426,9 @@ static void test_realistic(const std::string& path_to_mem_trace){
 
 static void test_file_read_speed(const std::string &path_to_mem_trace) {
 
-    const size_t page_cache_size = 16*1024;
+    const size_t max_page_cache_size = 16*1024;
 
-    LRU_K c1(page_cache_size,2);
+    LRU_K c1(max_page_cache_size,2);
 //
     bool is_load;
     uint64_t address;
@@ -494,7 +494,7 @@ static void test_file_read_speed(const std::string &path_to_mem_trace) {
 
     //////////////////////
 
-    LRU_K c2(page_cache_size,2);
+    LRU_K c2(max_page_cache_size,2);
 
     start = std::chrono::system_clock::now();
 
@@ -603,8 +603,8 @@ void arc_t(__off_t length, const char *addr) {
             std::cerr << "Error calling pthread_setaffinity_np: " << result << "\n";
     }
 
-    const size_t page_cache_size = 32 * 1024;
-    ARC a1(page_cache_size);
+    const size_t max_page_cache_size = 32 * 1024;
+    ARC a1(max_page_cache_size);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
     auto start = std::chrono::system_clock::now();
@@ -636,8 +636,8 @@ void car_t(__off_t length, const char *addr) {    cpu_set_t  mask;
     if(result !=0){
         std::cerr << "Error calling pthread_setaffinity_np: " << result << "\n";
     }
-    const size_t page_cache_size = 32 * 1024;
-    CAR a1(page_cache_size);
+    const size_t max_page_cache_size = 32 * 1024;
+    CAR a1(max_page_cache_size);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
     auto start = std::chrono::system_clock::now();
@@ -670,8 +670,8 @@ void lru_t(__off_t length, const char *addr) {
     if(result !=0){
         std::cerr << "Error calling pthread_setaffinity_np: " << result << "\n";
     }
-    const size_t page_cache_size = 32 * 1024;
-    LRU_K a1(page_cache_size,2);
+    const size_t max_page_cache_size = 32 * 1024;
+    LRU_K a1(max_page_cache_size,2);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
     auto start = std::chrono::system_clock::now();
@@ -704,8 +704,8 @@ void c_t(__off_t length, const char *addr) {
     if(result !=0){
         std::cerr << "Error calling pthread_setaffinity_np: " << result << "\n";
     }
-    const size_t page_cache_size = 32 * 1024;
-    CLOCK a1(page_cache_size,2);
+    const size_t max_page_cache_size = 32 * 1024;
+    CLOCK a1(max_page_cache_size,2);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
     auto start = std::chrono::system_clock::now();
@@ -764,7 +764,7 @@ void test_full_all_mt(const std::string &path_to_mem_trace) {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 static void lru_consume_all(const std::string &path_to_mem_trace) {
-    const size_t page_cache_size = 16*1024;
+    const size_t max_page_cache_size = 16*1024;
 
     bool is_load;
     ptr_t address;
@@ -788,7 +788,7 @@ static void lru_consume_all(const std::string &path_to_mem_trace) {
     if (addr == MAP_FAILED)
         std::cout<<"Couldn't mmap the file"<<std::endl;
 
-    LRU_K c1(page_cache_size,2);
+    LRU_K c1(max_page_cache_size,2);
 
     end = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsed_seconds = end - start;
@@ -820,8 +820,8 @@ static void lru_consume_all(const std::string &path_to_mem_trace) {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void arc_np_t(__off_t length, const char *addr) {
-    const size_t page_cache_size = 32 * 1024;
-    ARC a1(page_cache_size);
+    const size_t max_page_cache_size = 32 * 1024;
+    ARC a1(max_page_cache_size);
     uint64_t address;
     auto end = std::chrono::system_clock::now();
     auto start = std::chrono::system_clock::now();
@@ -844,7 +844,7 @@ void arc_np_t(__off_t length, const char *addr) {
 
 
 static void arc_compare_CPU_pin(const std::string &path_to_mem_trace) {
-    const size_t page_cache_size = 16*1024;
+    const size_t max_page_cache_size = 16*1024;
 
     bool is_load = false;
     ptr_t address = 0;
@@ -868,7 +868,7 @@ static void arc_compare_CPU_pin(const std::string &path_to_mem_trace) {
     if (addr == MAP_FAILED)
         std::cout<<"Couldn't mmap the file"<<std::endl;
 
-    ARC c1(page_cache_size);
+    ARC c1(max_page_cache_size);
 
     end = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsed_seconds = end - start;
@@ -900,7 +900,7 @@ static void arc_compare_CPU_pin(const std::string &path_to_mem_trace) {
 namespace test {
     class DEQUE_LRU {
     public:
-        explicit DEQUE_LRU(uint16_t page_cache_size) : page_cache_size(page_cache_size) {};
+        explicit DEQUE_LRU(uint16_t max_page_cache_size) : max_page_cache_size(max_page_cache_size) {};
 
         bool consume(page_t page_start) {
             bool changed = true;
@@ -912,7 +912,7 @@ namespace test {
             histories.pop_back();
             histories.push_front(count_stamp);
             if (page_fault) {
-                if (page_cache.size() == page_cache_size) { //Full, must replace
+                if (page_cache.size() == max_page_cache_size) { //Full, must replace
                     auto victim_page_it = std::prev(page_cache.end());
                     page_to_data.erase(*victim_page_it);
                     page_cache.erase(victim_page_it);
@@ -982,7 +982,7 @@ namespace test {
         std::deque<uint64_t> page_cache{}; // idx 0 = MRU; idx size-1 = LRU, sorted by second history
         std::unordered_map<page_t, updateHere> page_to_data;
         uint64_t count_stamp = 0;
-        const size_t page_cache_size;
+        const size_t max_page_cache_size;
 
         std::string cache_to_string(size_t num_elements) {
             if (num_elements > page_cache.size()) num_elements = page_cache.size();

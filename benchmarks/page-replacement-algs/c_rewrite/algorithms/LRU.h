@@ -9,9 +9,11 @@
 
 class LRU : public GenericAlgorithm {
 public:
-    LRU(size_t page_cache_size) : GenericAlgorithm(page_cache_size){};
-    bool consume(page_t page_start) override;
-    inline bool is_page_fault(page_t page) const override {return !page_to_data_internal.contains(page);};
+    LRU(size_t page_cache_size,untracked_eviction::type evictionType) : GenericAlgorithm(page_cache_size,evictionType){};
+    bool consume_tracked(page_t page_start) override;
+    inline bool is_tracked_page_fault(page_t page) const override {return !page_to_data_internal.contains(page);};
+    void evict_from_tracked() override;
+    size_t tracked_size() override{return page_cache.size();};
     std::string name() override {return "LRU";};
     std::unique_ptr<page_cache_copy_t> get_page_cache_copy() override;
     const lru_cache_t * get_cache_iterable() const {return &page_cache;}

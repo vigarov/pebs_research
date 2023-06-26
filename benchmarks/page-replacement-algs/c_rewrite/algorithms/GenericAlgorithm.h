@@ -13,6 +13,8 @@
 #include <list>
 #include <optional>
 #include <variant>
+#include <random>
+#include <iostream>
 
 typedef uint64_t ptr_t;
 typedef ptr_t page_t;
@@ -154,15 +156,195 @@ private:
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+template<typename T>
+class SimpleContainer{
+public:
+    SimpleContainer(){
+        std::random_device dev;
+        rng = std::mt19937(dev());
+    }
+    virtual ~SimpleContainer() = default;
+    virtual bool contains(const T& element) = 0;
+    virtual bool insert(const T& element) = 0;
+    virtual bool erase(const T& element) = 0;
+    virtual bool evict() = 0;
+    virtual size_t size() = 0;
+protected:
+    std::mt19937 rng;
+};
+
+
+//Implementation of https://stackoverflow.com/questions/5682218/data-structure-insert-remove-contains-get-random-element-all-at-o1
+
+struct __attribute__((packed)) RandomSetInfo{
+    size_t index;
+};
+
+template<typename T>
+class RandomSet : public SimpleContainer<T>{
+public:
+    RandomSet()= default;
+    bool contains(const T& element) override{
+        return elem_info.contains(element);
+    };
+    bool insert(const T& element) override{
+        if(!contains(element)){
+            elem_info[element] = {elems.size()};
+            elems.push_back(element);
+            return true;
+        }
+        return false;
+    };
+    bool erase(const T& element) override{
+        if(contains(element)){
+            auto delete_elem_info = elem_info[element];
+            if(delete_elem_info.index != (elems.size()-1)) {
+                auto last_elem = elems[elems.size() - 1];
+                auto &last_elem_info = elem_info[last_elem];
+                elems[(last_elem_info.index = delete_elem_info.index)] = last_elem;
+            }
+            elems.pop_back();
+            elem_info.erase(element);
+            return true;
+        }
+        return false;
+    };
+
+    bool get_random(T& ret,bool andErase = false){
+        auto elem_size =elems.size();
+        if(elem_size == 0) return false;
+        std::uniform_int_distribution<std::mt19937::result_type> dist(0,elem_size-1);
+        ret = elems[dist(this->rng)];
+        if(andErase) erase(ret);
+        return true;
+    };
+    bool pop_random(T& ret){return get_random(ret,true);};
+
+    bool evict() override{
+        T element; //Unneeded
+        return pop_random(element);
+    };
+
+    size_t size() override{return elems.size();}
+private:
+    std::unordered_map<T,RandomSetInfo> elem_info;
+    std::vector<T> elems;
+};
+
+template<typename T>
+struct ListAdapterInfo{
+    std::list<T>::iterator it;
+};
+
+template<typename T>
+class ListAdapter : public SimpleContainer<T>{
+public:
+    ListAdapter() = default;
+    bool contains(const T& element) override{
+        return elem_info.contains(element);
+    };
+    bool insert(const T& element) override{
+        if(!contains(element)){
+            elem_info[element] = {elems.insert(elems.end(),element)};
+            return true;
+        }
+        return false;
+    };
+    bool erase(const T& element) override{
+        if(contains(element)){
+            elems.erase(elem_info[element].it);
+            elem_info.erase(element);
+            return true;
+        }
+        return false;
+    };
+    bool evict() override{
+        if(elems.empty()) return false;
+        auto elem = *elems.begin();
+        elem_info.erase(elem);
+        elems.pop_front();
+        return true;
+    };
+    size_t size() override{
+        return elems.size();
+    };
+private:
+    std::unordered_map<T,ListAdapterInfo<T>> elem_info;
+    std::list<T> elems;
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+namespace untracked_eviction {
+    enum type : uint8_t {
+        FIFO = 0, RANDOM
+    };
+    static constexpr auto all = std::array{FIFO,RANDOM};
+    inline std::string get_prefix(type t){
+        switch (t) {
+            case FIFO:
+                return "fifo";
+            case RANDOM:
+                return "random";
+            default:
+                return "unknown";
+        }
+    }
+}
+
+
 class GenericAlgorithm{
 public:
-    explicit GenericAlgorithm(size_t page_cache_size) : page_cache_size(page_cache_size) {};
-    virtual bool consume(page_t page_start) = 0;
-    [[nodiscard]] virtual inline bool is_page_fault(page_t page) const  = 0;
+    explicit GenericAlgorithm(size_t page_cache_size,untracked_eviction::type evictionType) : max_page_cache_size(page_cache_size) {
+        if (evictionType==untracked_eviction::FIFO){
+            U = dynamic_cast<SimpleContainer<page_t>*>(new ListAdapter<page_t>());
+        }
+        else if(evictionType==untracked_eviction::RANDOM){
+            U = dynamic_cast<SimpleContainer<page_t>*>(new RandomSet<page_t>());
+        }
+        else{
+            std::cerr<<"Unknown eviction type" << std::endl;
+        }
+    };
+    ~GenericAlgorithm(){
+      delete U;
+    };
+
+    [[nodiscard]] bool consume(page_t page_start, bool from_partial_mt){
+        if(!from_partial_mt){
+            //Must be a page fault
+            if(page_cache_full()){
+                evict();
+            }
+            return consume_untracked(page_start);
+        }
+        else{
+            //Not necessarily a page fault
+            if(U->contains(page_start)){
+                U->erase(page_start);
+            }
+            return consume_tracked(page_start);
+        }
+    }
+
+    [[nodiscard]] virtual inline bool is_page_fault(page_t page) { //TODO rename to `is_page_fault` after refactor
+        return !U->contains(page) && is_tracked_page_fault(page);
+    };
+
+    //TODO remove next two methods
+    size_t get_total_size(){
+        return tracked_size() + U->size();
+    }
+    size_t get_max_page_cache_size(){
+        return max_page_cache_size;
+    }
+
     virtual std::string name() = 0;
     virtual std::string toString() {return name() + " : cache = " +cache_to_string(10);};
     virtual std::unique_ptr<page_cache_copy_t> get_page_cache_copy() = 0;
-    virtual ~GenericAlgorithm() = default;
+
+
+    SimpleContainer<page_t>* U;
 protected:
     virtual std::string cache_to_string(size_t num_elements) = 0;
     template<typename Iterator>
@@ -176,5 +358,25 @@ protected:
         }
         return oss.str();
     };
-    size_t page_cache_size;
+    size_t max_page_cache_size;
+
+
+    [[nodiscard]] bool consume_untracked(page_t page_start) const{
+        return U->insert(page_start);
+    }
+    [[nodiscard]] virtual bool consume_tracked(page_t page_start) = 0;
+
+    [[nodiscard]] virtual inline bool is_tracked_page_fault(page_t page) const  = 0;
+    virtual size_t tracked_size() = 0;
+    bool page_cache_full(){
+        return get_total_size() == max_page_cache_size;
+    }
+
+
+    virtual void evict(){
+        if(!U->evict()){ //U->evict returns false iff U->size() == 0 <=> must evict from list of "tracked" pages+
+            evict_from_tracked();
+        }
+    }
+    virtual void evict_from_tracked() = 0;
 };

@@ -4,7 +4,7 @@
 
 #include "CAR.h"
 
-bool CAR::consume(page_t page_start) {
+bool CAR::consume_tracked(page_t page_start) {
     bool changed = true;
     auto& page_data_internal = page_to_data_internal[page_start];
     auto in_cache = (page_data_internal.in_list == T1 || page_data_internal.in_list == T2);
@@ -18,20 +18,23 @@ bool CAR::consume(page_t page_start) {
         }
     }
     else{
-        if(caches[T1].size() + caches[T2].size() == page_cache_size){
+        if(tracked_size() == max_page_cache_size){
             replace();
             if(page_data_internal.in_list != B1 && page_data_internal.in_list != B2 ){
-                if (caches[T1].size() + caches[B1].size() == page_cache_size) {
+                if (caches[T1].size() + caches[B1].size() == max_page_cache_size) {
                     // Discard LRU in B1
                     page_to_data_internal.erase(caches[B1].front());
                     caches[B1].pop_front();
                 }
-                else if (caches[T1].size() + caches[T2].size() + caches[B1].size() + caches[B2].size() == 2 * page_cache_size) {
+                else if (caches[T1].size() + caches[T2].size() + caches[B1].size() + caches[B2].size() == 2 * max_page_cache_size) {
                     // Discard LRU in B2
                     page_to_data_internal.erase(caches[B2].front());
                     caches[B2].pop_front();
                 }
             }
+        }
+        else if(page_cache_full()){
+            U->evict();
         }
         if(page_data_internal.in_list != B1 && page_data_internal.in_list != B2){
             //History Miss
@@ -41,7 +44,7 @@ bool CAR::consume(page_t page_start) {
         else{
             //History Hit
             if(page_data_internal.in_list == B1){
-                p = std::min(p + std::max(1., static_cast<double>(caches[B2].size()) /  static_cast<double>(caches[B1].size())), static_cast<double>(page_cache_size));
+                p = std::min(p + std::max(1., static_cast<double>(caches[B2].size()) /  static_cast<double>(caches[B1].size())), static_cast<double>(max_page_cache_size));
             }
             else{
                 p = std::max(p - std::max(1., static_cast<double>(caches[B1].size()) / static_cast<double>(caches[B2].size()) ), 0.);
@@ -100,4 +103,19 @@ std::unique_ptr<page_cache_copy_t> CAR::get_page_cache_copy() {
     concatenated_list.insert(concatenated_list.end(), caches[T2].begin(), caches[T2].end());
 
     return std::make_unique<page_cache_copy_t>(concatenated_list);
+}
+
+
+void CAR::evict_from_tracked() {
+    replace();
+    if (caches[T1].size() + caches[B1].size() >= max_page_cache_size) {
+        // Discard LRU in B1
+        page_to_data_internal.erase(caches[B1].front());
+        caches[B1].pop_front();
+    }
+    else if (caches[T1].size() + caches[T2].size() + caches[B1].size() + caches[B2].size() >= 2 * max_page_cache_size) {
+        // Discard LRU in B2
+        page_to_data_internal.erase(caches[B2].front());
+        caches[B2].pop_front();
+    }
 }
