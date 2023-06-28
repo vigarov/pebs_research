@@ -16,7 +16,7 @@ public:
     size_t tracked_size() override{return caches[T1].size()+caches[T2].size();};
     std::string name() override {return "ARC";};
     std::unique_ptr<page_cache_copy_t> get_page_cache_copy() override;
-    const dual_container_range<arc_cache_t>* get_cache_iterable() const {return &dcr;}
+    const auto* get_cache_iterable() const {return &dcr;}
 private:
     std::string cache_to_string(size_t num_elements) override{
         std::string ret;
@@ -38,10 +38,8 @@ private:
     double p = 0.;
     void replace(bool inB2);
 
-    dual_container_range<car_cache_t> dcr{caches[T1],caches[T2]};
+    dual_container_range<arc_cache_t,arc_cache_t> dcr{caches[T1],caches[T2]};
     void lru_to_mru(cache_list_idx from, cache_list_idx to);
-
-    std::list<dual_container_iterator<arc_cache_t>> iterators = {dcr.end()};
 };
 
 

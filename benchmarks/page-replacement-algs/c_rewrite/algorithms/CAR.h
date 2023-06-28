@@ -16,7 +16,7 @@ public:
     size_t tracked_size() override{return caches[T1].size()+caches[T2].size();};
     std::string name() override {return "CAR";};
     std::unique_ptr<page_cache_copy_t> get_page_cache_copy() override;
-    const dual_container_range<car_cache_t>* get_cache_iterable() const {return &dcr;}
+    const auto* get_cache_iterable() const {return &dcr;}
 private:
     std::string cache_to_string(size_t num_elements) override{
         std::string ret;
@@ -38,8 +38,7 @@ private:
     double p = 0.;
     std::array<size_t,2> num_unreferenced{};
     void replace();
-    dual_container_range<car_cache_t> dcr{caches[T1],caches[T2]};
-    std::list<dual_container_iterator<car_cache_t>> iterators = {dcr.end()};
+    dual_container_range<car_cache_t,car_cache_t> dcr{caches[T1],caches[T2]};
 };
 
 

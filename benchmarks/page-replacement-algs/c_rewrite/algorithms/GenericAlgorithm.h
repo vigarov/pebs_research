@@ -84,10 +84,10 @@ typedef std::vector<page_t> page_cache_copy_t;
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-template <typename T>
-class dual_container_iterator : public std::iterator<std::forward_iterator_tag, typename T::value_type> {
+template <typename T_const_iterator_type,typename T_value_type>
+class dual_container_iterator : public std::iterator<std::forward_iterator_tag, T_value_type> {
 public:
-    using iterator_type = typename T::const_iterator;
+    using iterator_type = T_const_iterator_type;
 
     dual_container_iterator() : current{}, end1{}, begin2{}, end2{}  {}
 
@@ -102,7 +102,7 @@ public:
         if (next == end1) {
             current = begin2;
         } else if(current != end2){
-            ++current;
+            current = next;
         }
         return *this;
     }
@@ -130,28 +130,31 @@ private:
     iterator_type end2;
 };
 
-template <typename T>
+template <typename T1, typename T2>
+requires (std::is_same<typename T1::value_type,typename T2::value_type>::value and std::is_same<typename T1::const_iterator,typename T2::const_iterator>::value)
 class dual_container_range {
-
 public:
-    dual_container_range(T& container1, T& container2)
+    dual_container_range(T1& container1, T2& container2)
             : container1(container1), container2(container2) {}
 
-    explicit dual_container_range(T& unique_container):container1(unique_container),container2(unique_container){}
+    explicit dual_container_range(T1& unique_container)
+            : container1(unique_container), container2(unique_container) {}
 
     auto begin() const {
-        return dual_container_iterator<T>(container1.begin(), container1.end(),
-                                          container2.begin(), container2.end());
+        return dual_container_iterator<typename T1::const_iterator,typename T1::value_type>(container1.begin(), container1.end(), container2.begin(), container2.end());
     }
 
     auto end() const {
-        return dual_container_iterator<T>(container1.begin(), container1.end(),
-                                          container2.begin(), container2.end(),container2.end());
+        return dual_container_iterator<typename T1::const_iterator,typename T1::value_type>(container1.begin(), container1.end(), container2.begin(), container2.end(), container2.end());
+    }
+
+    [[nodiscard]] size_t size() const {
+        return container1.size() + container2.size();
     }
 
 private:
-    const T& container1;
-    const T& container2;
+    const T1& container1;
+    const T2& container2;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

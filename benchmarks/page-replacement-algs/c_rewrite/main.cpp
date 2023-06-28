@@ -283,14 +283,41 @@ std::unordered_map<std::string, json> populate_or_get_db(const Args& args) {
     return db;
 }
 
-static constexpr double REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO = 0.01;
-static constexpr double AVERAGE_SAMPLE_RATIO = 0.05;
+
+struct SimpleRatio{
+    const size_t num;
+    const size_t denom;
+
+    constexpr SimpleRatio(size_t num,size_t denom) : num(num),denom(denom){}
+    [[nodiscard]] double toDouble() const {
+        return static_cast<double>(num)/static_cast<double>(denom);
+    }
+};
+
+static constexpr SimpleRatio LESSER_FREQUENCY_RATIO = {1,1000};// 0.001;
+static constexpr SimpleRatio REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO = {1,100};//0.01;
+static constexpr SimpleRatio AVERAGE_SAMPLE_RATIO =  {1,20};//0.05;
+static constexpr SimpleRatio ZERO_RATIO =  {0,1};
+static constexpr SimpleRatio ONE_RATIO =  {1,1};
+
+#define DENOM 5
+
+template<typename T, std::size_t N, typename F, std::size_t... I>
+constexpr auto create_array_impl(F&& func, std::index_sequence<I...>) {
+    return std::array<T, N>{ {func(I)...} };
+}
+template<typename T, std::size_t N, typename F>
+constexpr auto create_array(F&& func) {
+    return create_array_impl<T, N>(std::forward<F>(func), std::make_index_sequence<N>{});
+}
+
+
 #ifdef SERVER
 static constexpr size_t BUFFER_SIZE = 128*1024*1024;
 #else
 static constexpr size_t BUFFER_SIZE = 1024*1024;
 #endif
-static constexpr const int ALG_DIV_PRECISION = 2;
+static constexpr const int ALG_DIV_PRECISION = 3;
 namespace page_cache_algs {
     enum type {LRU_t, GCLOCK_t, ARC_t, CAR_t, NUM_ALGS};
     static constexpr std::array all = {LRU_t, GCLOCK_t, ARC_t, CAR_t};
@@ -311,12 +338,18 @@ namespace page_cache_algs {
     std::string type_to_alg_name(type t){return get_alg(t,untracked_eviction::FIFO /*here FIFO doesn't matter; we just use the name*/)->name();}
 }
 
-typedef std::pair<const page_cache_algs::type,double> compared_t;
+typedef std::pair<const page_cache_algs::type,SimpleRatio> compared_t;
 typedef std::pair<compared_t,compared_t> comparison_t;
 
+static std::string double_to_string_with_precision(double div, int precision) {
+    std::stringstream stream;
+    stream << std::fixed << std::setprecision(precision) << round_to_precision(div,precision);
+    return stream.str();
+}
 
-static inline std::string get_alg_div_name(page_cache_algs::type t,double div) {return page_cache_algs::type_to_alg_name(t)+'_'+ std::to_string(round_to_precision(div, ALG_DIV_PRECISION));}
-static inline std::string get_alg_div_name(compared_t ct){return get_alg_div_name(ct.first,ct.second);}
+static inline std::string get_alg_div_name(page_cache_algs::type t,double div) {return page_cache_algs::type_to_alg_name(t)+'_'+ double_to_string_with_precision(div,ALG_DIV_PRECISION);}
+
+static inline std::string get_alg_div_name(compared_t ct){return get_alg_div_name(ct.first,ct.second.toDouble());}
 
 static const std::string NO_STANDALONE = "!";
 
@@ -345,36 +378,118 @@ std::array<uint8_t,BUFFER_SIZE> mem_reqtype_buf{};
 
 struct AlgInThread;
 
-typedef bool (*consideration_method)(const AlgInThread& alg,size_t seen);
-
 typedef std::pair<uint64_t,uint64_t> temperature_change_log;
 typedef std::vector<temperature_change_log> temp_log_t;
+
+namespace consideration_methods{
+
+    class Considerator {
+    public:
+        Considerator() = default;
+        virtual ~Considerator() = default;
+        virtual bool should_consider() = 0;
+    };
+
+    //Considers I memory accesses in J calls (assuming a call each encountered memory access)
+    class I_in_J : public Considerator {
+    public:
+        I_in_J(size_t i, size_t j) : left_to_consider(i),left_in_batch(j),i(i),j(j){
+            if(i>j){
+                std::cerr << "I_in_J considerator: i is greater than j --> impossible";
+                exit(-1);
+            }
+        }
+    protected:
+        size_t left_to_consider,left_in_batch;
+        const size_t i,j;
+    };
+
+    class Probabilistic_I_in_J : public I_in_J{
+    public:
+        Probabilistic_I_in_J(size_t i,size_t j) : I_in_J(i,j){
+            std::random_device dev;
+            rng = std::mt19937(dev());
+        }
+
+        bool should_consider() override {
+            if(left_to_consider == 0 && left_in_batch == 0) {
+                left_to_consider = i;
+                left_in_batch = j;
+            }
+            bool consider = false;
+
+            if(left_to_consider != 0) {
+                if (left_in_batch == left_to_consider) {
+                    consider = true;
+                } else {
+                    //We must still consider, say, k memory accesses, out of the p left in our batch
+                    //--> consider this memory access with a probability of k/p
+                    std::uniform_int_distribution<std::mt19937::result_type> dist(1,left_in_batch);
+                    consider = dist(rng) <= left_to_consider; // k successes out of p possible values --> P(consider)=k/p
+                }
+            }
+
+            if(consider) left_to_consider --;
+            left_in_batch--;
+            return consider;
+        }
+    private:
+        std::mt19937 rng;
+    };
+
+    class Sequential_I_in_J : public I_in_J {
+    public:
+        Sequential_I_in_J(size_t i,size_t j) : I_in_J(i,j){}
+        bool should_consider() override{
+            if(left_in_batch == 0) {
+                left_to_consider = i;
+                left_in_batch = j;
+            }
+            bool consider = left_to_consider > 0;
+            if(consider) left_to_consider --;
+            left_in_batch --;
+            return consider;
+        }
+    };
+
+    class Never_Consider : public Considerator{
+    public:
+        Never_Consider() = default;
+        bool should_consider() override {
+            return false;
+        }
+    };
+
+    class Always_Consider : public Considerator{
+    public:
+        Always_Consider() = default;
+        bool should_consider() override {
+            return true;
+        }
+    };
+
+    std::unique_ptr<Considerator> get_considerator(SimpleRatio ratio) {
+        if(ratio.num == 0){
+            return std::make_unique<Never_Consider>(Never_Consider());
+        }
+        else if(ratio.num == ratio.denom){
+            return std::make_unique<Always_Consider>(Always_Consider());
+        }
+        else{// TODO : test with random i in j
+            return std::make_unique<Sequential_I_in_J>(Sequential_I_in_J(ratio.num,ratio.denom));
+        }
+    }
+}
+
 
 struct AlgInThread{
     std::unique_ptr<GenericAlgorithm> alg;
     size_t considered_loads = 0, considered_stores = 0;
     uint8_t changed = true;
-    const consideration_method considerationMethod;
+    const std::unique_ptr<consideration_methods::Considerator> considerator;
     uint64_t n_pfaults = 0, considered_pfaults = 0;
     const ThreadWorkAlgs twa;
 };
-
-namespace consideration_methods{
-    static inline bool consider_div(const AlgInThread &alg, size_t seen) {
-        return (static_cast<double>(alg.considered_loads + alg.considered_stores) / static_cast<double>(seen)) <= alg.twa.alg_info.second;
-    }
-
-    static inline bool
-    should_consider_div_uspace(const AlgInThread &alg, size_t seen) {
-        return consider_div(alg, seen);
-    }
-
-    static inline bool never_consider(const AlgInThread &alg, size_t seen){
-        (void)alg;
-        (void)seen;
-        return false;}
-}
-
 
 static const std::string OTHER_DATA_FN = "stats.csv";
 
@@ -389,9 +504,6 @@ void save_to_file_compressed(const std::shared_ptr<temp_log_t>& array, const std
     gzwrite(f, array->data(), array->size() * sizeof(temp_log_t::value_type));
     gzclose(f);
 }
-
-#ifdef SERVER
-#endif
 
 static constexpr char SEPARATOR = ',';
 
@@ -409,7 +521,7 @@ static void simulate_one(
     //Create algs
 
     AlgInThread ait = {.alg=page_cache_algs::get_alg(twa.alg_info.first,twa.untracked_eviction_alg,twa.mem_size_in_pages),
-                       .considerationMethod=twa.alg_info.second==0.?consideration_methods::never_consider:consideration_methods::should_consider_div_uspace,
+                       .considerator=consideration_methods::get_considerator(twa.alg_info.second),
                        .twa=std::move(twa)};
     std::cout << tid << ": Waiting for first fill and starting..." << std::endl;
 
@@ -472,7 +584,7 @@ static void simulate_one(
             if (seen % 100'000'000 == 0){
                 std::stringstream ss;
                 ss << tid << " - "<< get_alg_div_name(ait.twa.alg_info) <<" - Reached seen = " << seen << "\n"
-                   << "SampleRate=" << ait.twa.alg_info.second << ",#T="
+                   << "SampleRate=" << ait.twa.alg_info.second.toDouble() << ",#T="
                    << ait.considered_loads + ait.considered_stores << " (#S="
                    << ait.considered_stores << ",#L=" << ait.considered_loads;
                 ss << "), n_writes=" << n_writes <<
@@ -489,7 +601,7 @@ static void simulate_one(
                 ait.n_pfaults++;
             }
 
-            if(ait.considerationMethod(ait,seen)){
+            if(ait.considerator->should_consider()){
                 if(is_load){
                     ait.considered_loads++;
                 }else{
@@ -682,13 +794,16 @@ void start(const Args& args) {
     std::cout<<"Successfully mmaped the mem_trace, proceeding"<<std::endl;
 #endif
 
-    constexpr std::array samples_div = {0.,REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO,
-                                  AVERAGE_SAMPLE_RATIO,
-                                  0.2,0.4,0.6,0.8,1.0};
+
+    constexpr std::array special_samples_div = {LESSER_FREQUENCY_RATIO,REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO,AVERAGE_SAMPLE_RATIO};
+
+    constexpr auto divs_array = create_array<SimpleRatio,DENOM+1>([](auto i){return SimpleRatio(i,DENOM);});
+
+    const auto samples_div = dual_container_range(special_samples_div,divs_array);
 
     const std::string base_dir_posix = fs::path(args.data_save_dir).lexically_normal().string() + "/";
 
-    constexpr size_t num_comp_processes = samples_div.size() * page_cache_algs::NUM_ALGS * 2;
+    const size_t num_comp_processes = samples_div.size() * page_cache_algs::NUM_ALGS * 2;
 
     //Setup shared Synchronisation and Memory
     num_ready = num_comp_processes;
@@ -699,12 +814,13 @@ void start(const Args& args) {
 
     for(auto u_eviction_type : untracked_eviction::all) {
         const auto prefix = untracked_eviction::get_prefix(u_eviction_type)+"/";
-        for (auto &div: samples_div) {
+        for (auto &div_ratio: samples_div) {
+            auto div = div_ratio.toDouble();
             for (auto alg: page_cache_algs::all) {
                 auto path = fs::path(base_dir_posix + prefix + get_alg_div_name(alg,div));
                 fs::create_directories(path);
                 auto save_dir = fs::absolute(path).lexically_normal().string() + '/';
-                ThreadWorkAlgs t{{alg,div}, save_dir,u_eviction_type,args.mem_size_in_pages == 0? page_cache_size:args.mem_size_in_pages};
+                ThreadWorkAlgs t{{alg,div_ratio}, save_dir,u_eviction_type,args.mem_size_in_pages == 0? page_cache_size:args.mem_size_in_pages};
                 all_threads.emplace_back(simulate_one,
 #ifdef SERVER
                                          addr, length,args.text_trace_format,
