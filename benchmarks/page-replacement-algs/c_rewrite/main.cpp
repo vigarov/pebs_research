@@ -236,7 +236,7 @@ std::unordered_map<std::string, json> populate_or_get_db(const Args& args) {
     in_file = db.contains(full_path);
     if (!in_file) {
         std::ios::openmode mt_mode = std::ios::out;
-        if(!args.text_trace_format) mode |= std::ios::binary;
+        if(!args.text_trace_format) mt_mode |= std::ios::binary;
         std::ifstream mtf(full_path,mt_mode);
         if (!mtf.is_open()) {
             std::cerr << "Failed to open memory trace file" << std::endl;
@@ -555,7 +555,7 @@ static void simulate_one(
             return std::tuple{true,is_load,mem_address};
         };
     }
-    // auto should_break = (round_to_precision(ait.twa.alg_info.second,2 )== 1.) && (ait.twa.alg_info.first == page_cache_algs::LRU_t) && (ait.twa.save_dir.find("fifo") != std::string::npos);
+    auto should_break = (ait.twa.alg_info.second.num== ait.twa.alg_info.second.denom) && (ait.twa.alg_info.first == page_cache_algs::LRU_t) && (ait.twa.save_dir.find("random") != std::string::npos);
 
     while(at < total_length){
 #endif
@@ -602,6 +602,9 @@ static void simulate_one(
             }
 
             if(ait.considerator->should_consider()){
+                if(should_break && (ait.alg->get_total_size() == ait.alg->get_max_page_cache_size())){
+                    size_t test = 0;
+                }
                 if(is_load){
                     ait.considered_loads++;
                 }else{
@@ -611,9 +614,6 @@ static void simulate_one(
                     ait.considered_pfaults++;
                 }
 
-                // if(should_break && (ait.alg->get_total_size() == ait.alg->get_max_page_cache_size())){
-                //     size_t test = 0;
-                // }
                 ait.changed = ait.alg->consume(page_base,true);
             }
             else if(pfault){

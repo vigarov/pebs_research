@@ -32,7 +32,7 @@ STATS = "stats.csv"
 
 BUFFER_SIZE = 1024 * 1024
 
-algs = ["lru", "car", "arc", "car"]
+algs = ["lru", "clock","arc","car"]
 
 
 def beautify(a: str):
@@ -88,7 +88,9 @@ PARSEC = "parsec"
 PARSEC_BENCHES_AND_MINUS_VALUES = [("ferret", 54103303), ("canneal", 0), ("dedup", 0)]
 PMBENCH, PM_MINUS_VALUE = "pmbench", 2080037
 STREAM, STREAM_MINUS_VALUE = "stream", 117278
-
+LINEWIDTHS = np.linspace(0.4,1.5,4)[::-1]
+ALPHAS = np.linspace(0.7,1,4)[::-1]
+MARKERSIZES = np.linspace(0,1,4)
 
 def main(args):
     p = Path(args.input_parent)
@@ -127,6 +129,7 @@ def main(args):
 
             for div_dir in f_r.iterdir():
                 alg_name, div = get_alg_info(div_dir.name)
+                assert alg_name.lower() in algs
                 curr_dict = per_alg_data.get(alg_name,{})
                 with open(div_dir.absolute().as_posix() + '/stats.csv') as csvfile:
                     reader = csv.DictReader(csvfile)
@@ -139,28 +142,35 @@ def main(args):
                     curr_dict[div] = div_info_dict
                 per_alg_data[alg_name] = curr_dict
 
-            i = 0
-            for alg_name, divs_info_dict in per_alg_data.items():
+            sorted_per_alg_data = dict(sorted(per_alg_data.items(), key=lambda item: algs.index(item[0].lower())))
+            y_lim_min = 0
+            for alg_name, divs_info_dict in sorted_per_alg_data.items():
                 x, y = [], []
                 for div, dict_div_info in divs_info_dict.items():
-                    x.append(str(round(float(div), 2)))
+                    if round(float(div), 3) == 0.001 :
+                        continue
+                    x.append(str(round(float(div), 3)))
                     y.append(int(dict_div_info['pfaults']))
                     assert int(dict_div_info['considered_pfaults']) <= int(dict_div_info['pfaults'])
-                    assert round((int(dict_div_info['considered_l']) + int(dict_div_info['considered_s']))/int(dict_div_info['seen']),2) == float(div)
+                    assert round((int(dict_div_info['considered_l']) + int(dict_div_info['considered_s']))/int(dict_div_info['seen']),3) == float(div)
                 x, y = np.array(x), np.array(y)
                 y_non_unique = y - y_minus_value
+                y_lim_min = max(0,np.min(y_non_unique)-1000)
                 x_sort_indices = x.argsort()
                 x, y, y_non_unique = x[x_sort_indices], y[x_sort_indices], y_non_unique[x_sort_indices]
 
-                alg_axis, alg_nu_axis = axes[0][i], axes[1][i]
-                color_hex = CB_color_cycle[i]
+                index = algs.index(alg_name.lower())
+                alg_axis, alg_nu_axis = axes[0][index], axes[1][index]
+                color_hex = CB_color_cycle[index]
+                color_rgb = [int(color_hex[1:][i:i+2], 16)/255 for i in (0, 2, 4)]
+                color_rgba = tuple([*color_rgb,ALPHAS[index]])
+                alg_axis.set_title(alg_name.upper())
+
                 alg_axis.bar(x, y, color=color_hex)
                 alg_nu_axis.bar(x, y_non_unique, color=color_hex)
 
-                recap_axis_all.plot(x, y, '-x', color=color_hex)
-                recap_axis_non_unique.plot(x, y_non_unique, '-x', color=color_hex)
-
-                i += 1
+                recap_axis_all.plot(x, y, '-x', color=color_rgba,linewidth=LINEWIDTHS[index],markersize=MARKERSIZES[index]*10)
+                recap_axis_non_unique.plot(x, y_non_unique, '-x', color=color_rgba,linewidth=LINEWIDTHS[index],markersize=MARKERSIZES[index]*10)
 
             fig.suptitle(f"{bench_name} ,{num_pages} pages,{untracked_policy_name.upper()}")
 
@@ -169,13 +179,14 @@ def main(args):
             for ax in axes[1]:
                 ax.set(ylabel="# non-compulsory pagefaults")
 
-            y_lim_max = 0
+            y_lim_max =0
             for ax in axes.flat:
                 ax.set(xlabel='Percentage of mem. trace used as extra information')
-                y_lim_max = max(y_lim_max, ax.get_ylim()[1])
+                ax_lims = ax.get_ylim()
+                y_lim_max = max(y_lim_max, ax_lims[1])
             # Hide x labels and tick labels for top plots and y ticks for right plots.
             for ax in axes.flat:
-                ax.set_ylim([0, y_lim_max])
+                ax.set_ylim([y_lim_min, y_lim_max])
                 ax.label_outer()
 
             curr_fig_size_inches = fig.get_size_inches()
@@ -197,7 +208,7 @@ def main(args):
     save_parent.mkdir(parents=False,exist_ok=False)
 
     for fig,untracked_policy_name_lower in all_graphs:
-        fig.save(save_parent.absolute().as_posix()+'/'+untracked_policy_name_lower+'.png')
+        fig.savefig(save_parent.absolute().as_posix()+'/'+untracked_policy_name_lower+'.png')
 
 
 # Press the green button in the gutter to run the script.
