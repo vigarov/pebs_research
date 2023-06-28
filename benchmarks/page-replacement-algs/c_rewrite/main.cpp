@@ -49,6 +49,44 @@ static double round_to_precision(double f, uint8_t nd){
     return std::round(f*tens)/tens;
 }
 
+size_t parseMemoryString(const std::string& memoryString) {
+    std::string strippedString = memoryString;
+    strippedString.erase(std::remove_if(strippedString.begin(), strippedString.end(), ::isspace), strippedString.end());
+
+    size_t value = 0;
+    size_t multiplier = 1;
+
+    std::istringstream iss(strippedString);
+    iss >> value;
+
+    char unitChar;
+    if (iss >> unitChar) {
+        switch (unitChar) {
+            case 'B':
+                multiplier = 1;
+                break;
+            case 'K':
+                multiplier = 1024;
+                break;
+            case 'M':
+                multiplier = 1024 * 1024;
+                break;
+            case 'G':
+                multiplier = 1024 * 1024 * 1024;
+                break;
+            case 'T':
+                multiplier = static_cast<size_t>(1024) * 1024 * 1024 * 1024;
+                break;
+            default:
+                throw std::invalid_argument("Invalid memory unit: " + strippedString);
+        }
+    } else {
+        throw std::invalid_argument("Invalid memory string: " + strippedString);
+    }
+
+    return value * multiplier;
+}
+
 static std::string parseMemorySize(size_t num) {
     const auto units = std::array{"B", "KB", "MB", "GB", "TB"};
     size_t unitIndex = 0;
@@ -70,6 +108,7 @@ struct Args {
     std::string data_save_dir = "results/%mtp/%tst";
     std::string mem_trace_path;
     bool text_trace_format = false;
+    size_t mem_size_in_pages = 0;
 
     Args(int argc, char* argv[]) {
         int i = 1;
@@ -85,7 +124,10 @@ struct Args {
                 data_save_dir = argv[i++];
             } else if(arg == "-o" || arg == "--old-trace"){
                 text_trace_format = true;
-            } else if (i == argc) {
+            } else if(arg=="-m") {
+                mem_size_in_pages = parseMemoryString(argv[i++]);
+            }
+            else if (i == argc) {
                 mem_trace_path = arg;
             } else {
                 std::cerr << "Invalid argument: " << arg << std::endl;
@@ -156,7 +198,7 @@ struct Args {
         //Add 'memory.txt'
         std::ofstream mem_file(data_save_dir+"/memory.txt");
         if(mem_file.is_open()) {
-            mem_file << "memory_used=" << parseMemorySize(page_cache_size) << "pages=" << parseMemorySize(page_cache_size*PAGE_SIZE) << "memory";
+            mem_file << "memory_used=" << parseMemorySize(mem_size_in_pages == 0 ? page_cache_size:mem_size_in_pages) << "pages=" << parseMemorySize(page_cache_size*PAGE_SIZE) << "memory";
             mem_file.close();
         }
         else{
@@ -252,16 +294,16 @@ static constexpr const int ALG_DIV_PRECISION = 2;
 namespace page_cache_algs {
     enum type {LRU_t, GCLOCK_t, ARC_t, CAR_t, NUM_ALGS};
     static constexpr std::array all = {LRU_t, GCLOCK_t, ARC_t, CAR_t};
-    std::unique_ptr<GenericAlgorithm> get_alg(type t,untracked_eviction::type u_t){
+    std::unique_ptr<GenericAlgorithm> get_alg(type t,untracked_eviction::type u_t, size_t mem_size_in_pages = page_cache_size){
         switch(t){
             case LRU_t:
-                return std::make_unique<LRU>(page_cache_size,u_t);
+                return std::make_unique<LRU>(mem_size_in_pages,u_t);
             case GCLOCK_t:
-                return std::make_unique<CLOCK>(page_cache_size,u_t,1);
+                return std::make_unique<CLOCK>(mem_size_in_pages,u_t,1);
             case ARC_t:
-                return std::make_unique<ARC>(page_cache_size,u_t);
+                return std::make_unique<ARC>(mem_size_in_pages,u_t);
             case CAR_t:
-                return std::make_unique<CAR>(page_cache_size,u_t);
+                return std::make_unique<CAR>(mem_size_in_pages,u_t);
             default:
                 return nullptr;
         }
@@ -282,6 +324,7 @@ struct ThreadWorkAlgs{
     const compared_t alg_info;
     std::string save_dir = NO_STANDALONE;
     const untracked_eviction::type untracked_eviction_alg;
+    const size_t mem_size_in_pages;
 };
 
 template<typename It>
@@ -365,7 +408,7 @@ static void simulate_one(
     size_t n_writes = 0,seen = 0;
     //Create algs
 
-    AlgInThread ait = {.alg=page_cache_algs::get_alg(twa.alg_info.first,twa.untracked_eviction_alg),
+    AlgInThread ait = {.alg=page_cache_algs::get_alg(twa.alg_info.first,twa.untracked_eviction_alg,twa.mem_size_in_pages),
                        .considerationMethod=twa.alg_info.second==0.?consideration_methods::never_consider:consideration_methods::should_consider_div_uspace,
                        .twa=std::move(twa)};
     std::cout << tid << ": Waiting for first fill and starting..." << std::endl;
@@ -661,7 +704,7 @@ void start(const Args& args) {
                 auto path = fs::path(base_dir_posix + prefix + get_alg_div_name(alg,div));
                 fs::create_directories(path);
                 auto save_dir = fs::absolute(path).lexically_normal().string() + '/';
-                ThreadWorkAlgs t{{alg,div}, save_dir,u_eviction_type};
+                ThreadWorkAlgs t{{alg,div}, save_dir,u_eviction_type,args.mem_size_in_pages == 0? page_cache_size:args.mem_size_in_pages};
                 all_threads.emplace_back(simulate_one,
 #ifdef SERVER
                                          addr, length,args.text_trace_format,
