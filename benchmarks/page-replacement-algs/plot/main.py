@@ -90,7 +90,7 @@ PMBENCH, PM_MINUS_VALUE = "pmbench", 2080037
 STREAM, STREAM_MINUS_VALUE = "stream", 117278
 LINEWIDTHS = np.linspace(0.4,1.5,4)[::-1]
 ALPHAS = np.linspace(0.7,1,4)[::-1]
-MARKERSIZES = np.linspace(0,1,4)
+MARKERSIZES = np.linspace(0.2,1,4)
 
 def main(args):
     p = Path(args.input_parent)
@@ -143,7 +143,6 @@ def main(args):
                 per_alg_data[alg_name] = curr_dict
 
             sorted_per_alg_data = dict(sorted(per_alg_data.items(), key=lambda item: algs.index(item[0].lower())))
-            y_lim_min = 0
             for alg_name, divs_info_dict in sorted_per_alg_data.items():
                 x, y = [], []
                 for div, dict_div_info in divs_info_dict.items():
@@ -154,10 +153,10 @@ def main(args):
                     assert int(dict_div_info['considered_pfaults']) <= int(dict_div_info['pfaults'])
                     assert round((int(dict_div_info['considered_l']) + int(dict_div_info['considered_s']))/int(dict_div_info['seen']),3) == float(div)
                 x, y = np.array(x), np.array(y)
+                x_float = np.array([float(elem) for elem in x ])
                 y_non_unique = y - y_minus_value
-                y_lim_min = max(0,np.min(y_non_unique)-1000)
                 x_sort_indices = x.argsort()
-                x, y, y_non_unique = x[x_sort_indices], y[x_sort_indices], y_non_unique[x_sort_indices]
+                x, y,x_float, y_non_unique = x[x_sort_indices], y[x_sort_indices],x_float[x_sort_indices], y_non_unique[x_sort_indices]
 
                 index = algs.index(alg_name.lower())
                 alg_axis, alg_nu_axis = axes[0][index], axes[1][index]
@@ -169,25 +168,26 @@ def main(args):
                 alg_axis.bar(x, y, color=color_hex)
                 alg_nu_axis.bar(x, y_non_unique, color=color_hex)
 
-                recap_axis_all.plot(x, y, '-x', color=color_rgba,linewidth=LINEWIDTHS[index],markersize=MARKERSIZES[index]*10)
-                recap_axis_non_unique.plot(x, y_non_unique, '-x', color=color_rgba,linewidth=LINEWIDTHS[index],markersize=MARKERSIZES[index]*10)
+                recap_axis_all.plot(x_float, y, '-x', color=color_rgba,linewidth=LINEWIDTHS[index],markersize=MARKERSIZES[index]*10)
+                recap_axis_non_unique.plot(x_float, y_non_unique, '-x', color=color_rgba,linewidth=LINEWIDTHS[index],markersize=MARKERSIZES[index]*10)
 
-            fig.suptitle(f"{bench_name} ,{num_pages} pages,{untracked_policy_name.upper()}")
+            fig.suptitle(f"{bench_name}, Memory size: {num_pages} pages; Workload requirement: {y_minus_value:,} unique pages, {untracked_policy_name.upper()}")
 
             for ax in axes[0]:
                 ax.set(ylabel="# pagefaults")
             for ax in axes[1]:
                 ax.set(ylabel="# non-compulsory pagefaults")
 
-            y_lim_max =0
-            for ax in axes.flat:
-                ax.set(xlabel='Percentage of mem. trace used as extra information')
-                ax_lims = ax.get_ylim()
-                y_lim_max = max(y_lim_max, ax_lims[1])
-            # Hide x labels and tick labels for top plots and y ticks for right plots.
-            for ax in axes.flat:
-                ax.set_ylim([y_lim_min, y_lim_max])
-                ax.label_outer()
+            for i in range(len(axes)):
+                y_lim_max =0
+                for ax in axes[i]:
+                    ax.set(xlabel='Percentage of mem. trace used as extra information')
+                    ax_lims = ax.get_ylim()
+                    y_lim_max = max(y_lim_max, ax_lims[1])
+                # Hide x labels and tick labels for top plots and y ticks for right plots.
+                for ax in axes[i]:
+                    ax.set_ylim([0, y_lim_max])
+                    ax.label_outer()
 
             curr_fig_size_inches = fig.get_size_inches()
             fig.set_size_inches((curr_fig_size_inches[0] * 3.5, curr_fig_size_inches[1]))
@@ -200,7 +200,7 @@ def main(args):
                 mem_info = mem_info_file.readlines()
                 assert len(mem_info) == 1
                 splitted_mi = [string for string in mem_info[0].split('=') if "pages" in string]
-                num_pages = splitted_mi[-1].split('pages')[0]
+                num_pages = splitted_mi[-1].split('pages')[0].replace("B","")
 
     save_parent = Path(args.output_dir+'/'+bench_name)
     save_parent.mkdir(parents=True,exist_ok=True)
