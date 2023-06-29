@@ -108,6 +108,8 @@ struct Args {
     std::string data_save_dir = "results/%mtp/%tst";
     std::string mem_trace_path;
     bool text_trace_format = false;
+    bool additional_precision_only = false;
+    bool multi_run_addition_precision = false;
     size_t mem_size_in_pages = 0;
 
     Args(int argc, char* argv[]) {
@@ -124,6 +126,10 @@ struct Args {
                 data_save_dir = argv[i++];
             } else if(arg == "-o" || arg == "--old-trace"){
                 text_trace_format = true;
+            } else if(arg=="--aop" || arg == "--additional-precision-only") {
+                additional_precision_only = true;
+            } else if(arg=="--mrap" || arg == "--multi-run-additional-precision") {
+                multi_run_addition_precision = true;
             } else if(arg=="-m") {
                 mem_size_in_pages = parseMemoryString(argv[i++]);
             }
@@ -183,6 +189,8 @@ struct Args {
         data_save_dir = std::regex_replace(data_save_dir, std::regex("\\%mtp"), bm_name);
         data_save_dir = std::regex_replace(data_save_dir, std::regex("\\%tst"), timestr);
         data_save_dir = std::regex_replace(data_save_dir, std::regex("!"), "%");
+        if(additional_precision_only) data_save_dir+="_add_prec_only";
+        else if(multi_run_addition_precision) data_save_dir+= "full_prec";
 
         const fs::path data_save_dir_fs(data_save_dir);
         if (fs::exists(data_save_dir_fs) && !fs::is_directory(data_save_dir_fs)) {
@@ -278,7 +286,7 @@ std::unordered_map<std::string, json> populate_or_get_db(const Args& args) {
         }
         db[full_path] = {{"loads", lds}, {"stores", strs}, {"ratio", round_to_precision(static_cast<double>(lds)/static_cast<double>(strs),4)}, {"count", lds + strs},{"n_unique",all_pages.size()}};
         dbf.seekp(0);
-        dbf << db.dump();
+        dbf << db.dump(0);
     }
     return db;
 }
@@ -509,7 +517,7 @@ static constexpr char SEPARATOR = ',';
 static void simulate_one(
 #ifdef SERVER
         const char* mmap_file_address,
-        size_t total_length,
+        const size_t total_length,
         bool text_trace_format,
 #else
         std::barrier<>& it_barrier,
@@ -765,6 +773,49 @@ static void reader_thread(std::string path_to_mem_trace,std::string parent_dir, 
     }
 }
 
+template <typename T>
+requires std::is_base_of_v<SimpleRatio,typename T::value_type>
+void start_and_run_processes(const Args &args, const std::string &base_dir_posix,const __off_t &length, const char *&addr,
+                             const T &div_iterable) {
+    const size_t num_comp_processes = div_iterable.size() * page_cache_algs::NUM_ALGS * 2;
+
+    //Setup shared Synchronisation and Memory
+    num_ready = num_comp_processes;
+    std::barrier it_barrier(static_cast<long>(num_comp_processes));
+
+    std::vector<std::jthread> all_threads{};
+    all_threads.reserve(num_comp_processes);
+
+    for (auto u_eviction_type: untracked_eviction::all) {
+        const auto prefix = untracked_eviction::get_prefix(u_eviction_type) + "/";
+        for (auto &div_ratio: div_iterable) {
+            auto div = div_ratio.toDouble();
+            for (auto alg: page_cache_algs::all) {
+                auto path = fs::path(base_dir_posix + prefix + get_alg_div_name(alg, div));
+                fs::create_directories(path);
+                auto save_dir = fs::absolute(path).lexically_normal().string() + '/';
+                ThreadWorkAlgs t{{alg, div_ratio}, save_dir, u_eviction_type, args.mem_size_in_pages};
+                all_threads.emplace_back(simulate_one,
+#ifdef SERVER
+                                            addr, length, args.text_trace_format,
+#else
+                                            std::ref(it_barrier),
+#endif
+                                         t);
+            }
+        }
+    }
+
+#ifndef SERVER
+    std::jthread reader(reader_thread,args.mem_trace_path,base_dir_posix,args.text_trace_format);
+
+        reader.join();
+#endif
+
+    for (auto &t: all_threads) {
+        t.join();
+    }
+}
 
 void start(const Args& args) {
 
@@ -799,47 +850,20 @@ void start(const Args& args) {
     constexpr auto divs_array = create_array<SimpleRatio,DENOM+1>([](auto i){return SimpleRatio(i,DENOM);});
 
     const auto samples_div = dual_container_range(special_samples_div,divs_array);
+    constexpr auto additional_divs_array = create_array<SimpleRatio,DENOM>([](auto i){return SimpleRatio(2*i+1,2*DENOM);});
 
     const std::string base_dir_posix = fs::path(args.data_save_dir).lexically_normal().string() + "/";
 
-    const size_t num_comp_processes = samples_div.size() * page_cache_algs::NUM_ALGS * 2;
 
-    //Setup shared Synchronisation and Memory
-    num_ready = num_comp_processes;
-    std::barrier it_barrier(static_cast<long>(num_comp_processes));
-
-    std::vector<std::jthread> all_threads{};
-    all_threads.reserve(num_comp_processes);
-
-    for(auto u_eviction_type : untracked_eviction::all) {
-        const auto prefix = untracked_eviction::get_prefix(u_eviction_type)+"/";
-        for (auto &div_ratio: samples_div) {
-            auto div = div_ratio.toDouble();
-            for (auto alg: page_cache_algs::all) {
-                auto path = fs::path(base_dir_posix + prefix + get_alg_div_name(alg,div));
-                fs::create_directories(path);
-                auto save_dir = fs::absolute(path).lexically_normal().string() + '/';
-                ThreadWorkAlgs t{{alg,div_ratio}, save_dir,u_eviction_type,args.mem_size_in_pages};
-                all_threads.emplace_back(simulate_one,
-#ifdef SERVER
-                                         addr, length,args.text_trace_format,
-#else
-                                         std::ref(it_barrier),
-#endif
-                                         t);
-            }
-        }
+    if(!args.additional_precision_only) {
+        start_and_run_processes(args, base_dir_posix, length, addr, samples_div);
+        std::cout << std::endl <<"Finished initial read" <<std::endl;
+    }
+    if(args.multi_run_addition_precision || args.additional_precision_only){
+        std::cout << "Starting additional info read" << std::endl;
+        start_and_run_processes(args,base_dir_posix,length,addr,additional_divs_array);
     }
 
-#ifndef SERVER
-    std::jthread reader(reader_thread,args.mem_trace_path,base_dir_posix,args.text_trace_format);
-
-    reader.join();
-#endif
-
-    for(auto& t : all_threads){
-        t.join();
-    }
 #ifdef SERVER
     auto ret = munmap((void *) addr, length);
     if(ret)

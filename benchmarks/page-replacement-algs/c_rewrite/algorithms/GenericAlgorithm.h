@@ -134,6 +134,8 @@ template <typename T1, typename T2>
 requires (std::is_same<typename T1::value_type,typename T2::value_type>::value and std::is_same<typename T1::const_iterator,typename T2::const_iterator>::value)
 class dual_container_range {
 public:
+    using value_type = typename T1::value_type;
+    using iterator = dual_container_iterator<typename T1::const_iterator,value_type>;
     dual_container_range(T1& container1, T2& container2)
             : container1(container1), container2(container2) {}
 
@@ -141,11 +143,11 @@ public:
             : container1(unique_container), container2(unique_container) {}
 
     auto begin() const {
-        return dual_container_iterator<typename T1::const_iterator,typename T1::value_type>(container1.begin(), container1.end(), container2.begin(), container2.end());
+        return iterator(container1.begin(), container1.end(), container2.begin(), container2.end());
     }
 
     auto end() const {
-        return dual_container_iterator<typename T1::const_iterator,typename T1::value_type>(container1.begin(), container1.end(), container2.begin(), container2.end(), container2.end());
+        return iterator(container1.begin(), container1.end(), container2.begin(), container2.end(), container2.end());
     }
 
     [[nodiscard]] size_t size() const {
