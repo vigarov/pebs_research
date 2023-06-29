@@ -294,7 +294,6 @@ struct SimpleRatio{
     }
 };
 
-static constexpr SimpleRatio LESSER_FREQUENCY_RATIO = {1,1000};// 0.001;
 static constexpr SimpleRatio REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO = {1,100};//0.01;
 static constexpr SimpleRatio AVERAGE_SAMPLE_RATIO =  {1,20};//0.05;
 static constexpr SimpleRatio ZERO_RATIO =  {0,1};
@@ -555,7 +554,7 @@ static void simulate_one(
             return std::tuple{true,is_load,mem_address};
         };
     }
-    auto should_break = (ait.twa.alg_info.second.num== ait.twa.alg_info.second.denom) && (ait.twa.alg_info.first == page_cache_algs::LRU_t) && (ait.twa.save_dir.find("random") != std::string::npos);
+    //auto should_break = (ait.twa.alg_info.second.num== ait.twa.alg_info.second.denom) && (ait.twa.alg_info.first == page_cache_algs::LRU_t) && (ait.twa.save_dir.find("random") != std::string::npos);
 
     while(at < total_length){
 #endif
@@ -581,7 +580,7 @@ static void simulate_one(
 #endif
 
             seen += 1;
-            if (seen % 100'000'000 == 0){
+            if (seen % 500'000'000 == 0){
                 std::stringstream ss;
                 ss << tid << " - "<< get_alg_div_name(ait.twa.alg_info) <<" - Reached seen = " << seen << "\n"
                    << "SampleRate=" << ait.twa.alg_info.second.toDouble() << ",#T="
@@ -602,9 +601,9 @@ static void simulate_one(
             }
 
             if(ait.considerator->should_consider()){
-                if(should_break && (ait.alg->get_total_size() == ait.alg->get_max_page_cache_size())){
-                    size_t test = 0;
-                }
+                // if(should_break && (ait.alg->get_total_size() == ait.alg->get_max_page_cache_size())){
+                //     size_t test = 0;
+                // }
                 if(is_load){
                     ait.considered_loads++;
                 }else{
@@ -795,7 +794,7 @@ void start(const Args& args) {
 #endif
 
 
-    constexpr std::array special_samples_div = {LESSER_FREQUENCY_RATIO,REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO,AVERAGE_SAMPLE_RATIO};
+    constexpr std::array special_samples_div = {REALISTIC_RATIO_SAMPLED_MEM_TRACE_RATIO,AVERAGE_SAMPLE_RATIO};
 
     constexpr auto divs_array = create_array<SimpleRatio,DENOM+1>([](auto i){return SimpleRatio(i,DENOM);});
 
