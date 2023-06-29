@@ -194,11 +194,11 @@ struct Args {
         data_save_dir = fs::absolute(data_save_dir_fs).lexically_normal().string();
         db_file = fs::absolute(db_file).lexically_normal().string();
         fs::create_directories(fs::path(db_file).parent_path());
-
+        if(mem_size_in_pages == 0) mem_size_in_pages = page_cache_size;
         //Add 'memory.txt'
         std::ofstream mem_file(data_save_dir+"/memory.txt");
         if(mem_file.is_open()) {
-            mem_file << "memory_used=" << parseMemorySize(mem_size_in_pages == 0 ? page_cache_size:mem_size_in_pages) << "pages=" << parseMemorySize(page_cache_size*PAGE_SIZE) << "memory";
+            mem_file << "memory_used=" << parseMemorySize(mem_size_in_pages) << "pages=" << parseMemorySize(mem_size_in_pages*PAGE_SIZE) << "memory";
             mem_file.close();
         }
         else{
@@ -820,7 +820,7 @@ void start(const Args& args) {
                 auto path = fs::path(base_dir_posix + prefix + get_alg_div_name(alg,div));
                 fs::create_directories(path);
                 auto save_dir = fs::absolute(path).lexically_normal().string() + '/';
-                ThreadWorkAlgs t{{alg,div_ratio}, save_dir,u_eviction_type,args.mem_size_in_pages == 0? page_cache_size:args.mem_size_in_pages};
+                ThreadWorkAlgs t{{alg,div_ratio}, save_dir,u_eviction_type,args.mem_size_in_pages};
                 all_threads.emplace_back(simulate_one,
 #ifdef SERVER
                                          addr, length,args.text_trace_format,
