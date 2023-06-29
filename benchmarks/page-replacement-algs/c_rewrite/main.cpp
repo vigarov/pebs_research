@@ -126,7 +126,7 @@ struct Args {
                 data_save_dir = argv[i++];
             } else if(arg == "-o" || arg == "--old-trace"){
                 text_trace_format = true;
-            } else if(arg=="--aop" || arg == "--additional-precision-only") {
+            } else if(arg=="--apo" || arg == "--additional-precision-only") {
                 additional_precision_only = true;
             } else if(arg=="--mrap" || arg == "--multi-run-additional-precision") {
                 multi_run_addition_precision = true;
