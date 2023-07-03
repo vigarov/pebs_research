@@ -85,12 +85,43 @@ def get_alg_info(dir_name):
 
 
 PARSEC = "parsec"
-PARSEC_BENCHES_AND_MINUS_VALUES = [("ferret", 54103303), ("canneal", 0), ("dedup", 21828984)]
+PARSEC_BENCHES_AND_MINUS_VALUES = [("ferret", 54103303), ("canneal", 0), ("dedup", 21828984),("bodytrack",1083792)]
 PMBENCH, PM_MINUS_VALUE = "pmbench", 2080037
 STREAM, STREAM_MINUS_VALUE = "stream", 117278
 LINEWIDTHS = np.linspace(0.4,1.5,4)[::-1]
 ALPHAS = np.linspace(0.7,1,4)[::-1]
 MARKERSIZES = np.linspace(0.2,1,4)
+
+
+def parse_memory_string(memory_string):
+    stripped_string = memory_string.replace(" ", "")
+
+    value = 0
+    multiplier = 1
+
+    try:
+        value_string = stripped_string.rstrip("BKMGTP")
+        unit_string = stripped_string[len(value_string):]
+        value = int(value_string)
+        unit_char = unit_string[0]
+
+        if unit_char == 'B':
+            multiplier = 1
+        elif unit_char == 'K':
+            multiplier = 1024
+        elif unit_char == 'M':
+            multiplier = 1024 * 1024
+        elif unit_char == 'G':
+            multiplier = 1024 * 1024 * 1024
+        elif unit_char == 'T':
+            multiplier = 1024 * 1024 * 1024 * 1024
+        else:
+            raise ValueError("Invalid memory unit: " + stripped_string)
+    except ValueError:
+        raise ValueError("Invalid memory string: " + stripped_string)
+
+    return value * multiplier
+
 
 def main(args):
     p = Path(args.input_parent)
@@ -122,8 +153,9 @@ def main(args):
         if f_r.is_dir():
             assert f_r.name == FIFO or f_r.name == RANDOM
             untracked_policy_name = FIFO if FIFO in f_r.name else RANDOM
-            fig, axes = plt.subplots(2, len(algs) + 1)
-            recap_axis_all, recap_axis_non_unique = axes[0][len(algs)], axes[1][len(algs)]
+            fig, axes = plt.subplots(2, 2)
+            recap_axis_all, recap_axis_non_unique = axes[0][1], axes[1][1]
+            alg_ax,alg_nu_ax = axes[0][0],axes[1][0]
 
             per_alg_data = {}
 
@@ -143,35 +175,56 @@ def main(args):
                 per_alg_data[alg_name] = curr_dict
 
             sorted_per_alg_data = dict(sorted(per_alg_data.items(), key=lambda item: algs.index(item[0].lower())))
+            width = 0.2
+            multiplier = 0
+            all_divs_str = None
+            all_divs_placeholder = None
+
             for alg_name, divs_info_dict in sorted_per_alg_data.items():
-                x, y = [], []
+                x_str, y = [], []
                 for div, dict_div_info in divs_info_dict.items():
                     if round(float(div), 3) == 0.001 :
                         continue
-                    x.append(str(round(float(div), 3)))
+                    x_str.append(str(round(float(div), 3)))
                     y.append(int(dict_div_info['pfaults']))
                     assert int(dict_div_info['considered_pfaults']) <= int(dict_div_info['pfaults'])
                     assert round((int(dict_div_info['considered_l']) + int(dict_div_info['considered_s']))/int(dict_div_info['seen']),3) == float(div)
-                x, y = np.array(x), np.array(y)
-                x_float = np.array([float(elem) for elem in x ])
+                x_str, y = np.array(x_str), np.array(y)
+                x_float = np.array([float(elem) for elem in x_str ])
                 y_non_unique = y - y_minus_value
-                x_sort_indices = x.argsort()
-                x, y,x_float, y_non_unique = x[x_sort_indices], y[x_sort_indices],x_float[x_sort_indices], y_non_unique[x_sort_indices]
+                x_sort_indices = x_float.argsort()
+                x_str, y,x_float, y_non_unique = x_str[x_sort_indices], y[x_sort_indices],x_float[x_sort_indices], y_non_unique[x_sort_indices]
+                x_placeholder = np.arange(len(x_str))
+                if all_divs_str is None:
+                    all_divs_str=x_str
+                if all_divs_placeholder is None:
+                    all_divs_placeholder=x_placeholder
 
                 index = algs.index(alg_name.lower())
-                alg_axis, alg_nu_axis = axes[0][index], axes[1][index]
                 color_hex = CB_color_cycle[index]
                 color_rgb = [int(color_hex[1:][i:i+2], 16)/255 for i in (0, 2, 4)]
                 color_rgba = tuple([*color_rgb,ALPHAS[index]])
-                alg_axis.set_title(alg_name.upper())
 
-                alg_axis.bar(x, y, color=color_hex)
-                alg_nu_axis.bar(x, y_non_unique, color=color_hex)
+                offset = width*multiplier
+                alg_ax.bar(all_divs_placeholder + offset, y, width, color=color_hex,label=alg_name, hatch=''if f_r.name == FIFO else "/")
+                alg_nu_ax.bar(all_divs_placeholder + offset, y_non_unique, width, color=color_hex, hatch=''if f_r.name == FIFO else "/")
+                multiplier+=1
 
-                recap_axis_all.plot(x_float, y, '-x', color=color_rgba,linewidth=LINEWIDTHS[index],markersize=MARKERSIZES[index]*10)
-                recap_axis_non_unique.plot(x_float, y_non_unique, '-x', color=color_rgba,linewidth=LINEWIDTHS[index],markersize=MARKERSIZES[index]*10)
+                recap_axis_all.plot(x_float, y, '-x', color=color_rgba,linewidth=LINEWIDTHS[index],markersize=MARKERSIZES[index]*10,zorder=2)
+                recap_axis_non_unique.plot(x_float, y_non_unique, '-x', color=color_rgba,linewidth=LINEWIDTHS[index],markersize=MARKERSIZES[index]*10,zorder=2)
 
             fig.suptitle(f"{bench_name}, Memory size: {num_pages} pages; Workload requirement: {y_minus_value:,} unique pages, {untracked_policy_name.upper()}")
+            fig.legend(loc='center right')
+
+            full_ratio = parse_memory_string(num_pages)/y_minus_value
+            half_ratio = full_ratio/2
+            recap_axis_all.axvline(x=full_ratio, color=CB_color_cycle[-1],ls="--",zorder=1)
+            recap_axis_all.axvline(x=half_ratio, color=CB_color_cycle[-2],ls="--",zorder=1)
+            recap_axis_non_unique.axvline(x=full_ratio, color=CB_color_cycle[-1],ls="--",zorder=1)
+            recap_axis_non_unique.axvline(x=half_ratio, color=CB_color_cycle[-2],ls="--",zorder=1)
+
+            alg_ax.set_xticks(all_divs_placeholder + 1.5*width, all_divs_str)
+            alg_nu_ax.set_xticks(all_divs_placeholder + 1.5*width, all_divs_str)
 
             for ax in axes[0]:
                 ax.set(ylabel="# pagefaults")
@@ -190,7 +243,7 @@ def main(args):
                     ax.label_outer()
 
             curr_fig_size_inches = fig.get_size_inches()
-            fig.set_size_inches((curr_fig_size_inches[0] * 3.5, curr_fig_size_inches[1]))
+            fig.set_size_inches((curr_fig_size_inches[0] * 2, curr_fig_size_inches[1]))
 
             fig.show()
             all_graphs.append((fig, untracked_policy_name.lower()))
