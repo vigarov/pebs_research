@@ -884,6 +884,7 @@ int main(int argc, char* argv[]) {
     auto db = populate_or_get_db(args);
     (void)db;
 #if JUST_DB
+    std::cout<<"Finished populating DB, exiting." << std::endl;
     return 0;
 #endif
 #if (BUILD_TYPE==0 && TESTING == 1)
