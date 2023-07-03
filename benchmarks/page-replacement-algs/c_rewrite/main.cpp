@@ -110,6 +110,7 @@ struct Args {
     bool text_trace_format = false;
     bool additional_precision_only = false;
     bool multi_run_addition_precision = false;
+    bool db_only = false;
     size_t mem_size_in_pages = 0;
 
     Args(int argc, char* argv[]) {
@@ -130,6 +131,8 @@ struct Args {
                 additional_precision_only = true;
             } else if(arg=="--mrap" || arg == "--multi-run-additional-precision") {
                 multi_run_addition_precision = true;
+            }else if(arg=="--db-only"){
+                db_only = true;
             } else if(arg=="-m") {
                 mem_size_in_pages = parseMemoryString(argv[i++]);
             }
@@ -877,16 +880,15 @@ template<typename It>
 size_t indexof(It start, It end, double value) { return std::distance(start, std::find(start, end, value)); }
 
 #define TESTING 0
-#define JUST_DB 0
 
 int main(int argc, char* argv[]) {
     const Args args(argc, argv);
     auto db = populate_or_get_db(args);
     (void)db;
-#if JUST_DB
-    std::cout<<"Finished populating DB, exiting." << std::endl;
-    return 0;
-#endif
+    if(args.db_only){
+        std::cout<<"Finished populating DB, exiting." << std::endl;
+        return 0;
+    }
 #if (BUILD_TYPE==0 && TESTING == 1)
     test_latest(args.mem_trace_path);
 #else
