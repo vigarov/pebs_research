@@ -85,7 +85,7 @@ def get_alg_info(dir_name):
 
 
 PARSEC = "parsec"
-PARSEC_BENCHES_AND_MINUS_VALUES = [("ferret", 54103303), ("canneal", 0), ("dedup", 21828984),("bodytrack",1083792)]
+PARSEC_BENCHES_AND_MINUS_VALUES = [("ferret", 54103303), ("canneal", 10012), ("dedup", 21828984),("bodytrack",1083792),("vips",11559423)]
 PMBENCH, PM_MINUS_VALUE = "pmbench", 2080037
 STREAM, STREAM_MINUS_VALUE = "stream", 117278
 LINEWIDTHS = np.linspace(0.4,1.5,4)[::-1]
