@@ -6,6 +6,13 @@
 "ratio": 0.5359,
 "stores": 2291877326
 },
+"/home/vigarov/research/benchmarks/results/parsec/canneal/mem_trace_03-07-2023_04-13-54.log": {
+"count": 2758466423,
+"loads": 1648594856,
+"n_unique": 10012,
+"ratio": 1.4854,
+"stores": 1109871567
+},
 "/home/vigarov/research/benchmarks/results/parsec/dedup/mem_trace_29-06-2023_04-40-31.log": {
 "count": 2654549859,
 "loads": 827379821,
