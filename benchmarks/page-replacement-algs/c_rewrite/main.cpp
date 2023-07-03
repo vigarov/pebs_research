@@ -165,7 +165,7 @@ struct Args {
             }
         }
         if(!changed) {
-            const std::vector<std::string> KNOWN_PARSEC_BENCHMARKS = {"ferret","dedup"};
+            const std::vector<std::string> KNOWN_PARSEC_BENCHMARKS = {"ferret","dedup","bodytrack","canneal"};
             for (const auto &bm: KNOWN_PARSEC_BENCHMARKS) {
                 if (mem_trace_path_fs.native().find(bm) != std::string::npos) {
                     bm_name = "parsec/"+bm;
