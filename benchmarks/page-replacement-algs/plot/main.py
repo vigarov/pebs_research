@@ -12,6 +12,9 @@ def parse_args():
         description="Plot script to show cache state modification patterns based on simulated (saved) data",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('-o', '--output-dir', help='Output directory (backslash ended)', default="graphs/")
+    parser.add_argument('-p','--parent-all', help="Treat input_parent as parent directory for other parent "
+                                                  "directories (recursively make graphs for all subdirs of parent "
+                                                  "dir)",action=argparse.BooleanOptionalAction,default=False)
     parser.add_argument('--latex', help='Output for latex (pgf)', action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument('input_parent',
                         help="Path of the parent directory where the comparison and standalone args reside")
@@ -217,11 +220,9 @@ def main(args):
             fig.legend(loc='center right')
 
             full_ratio = parse_memory_string(num_pages)/y_minus_value
-            half_ratio = full_ratio/2
-            recap_axis_all.axvline(x=full_ratio, color=CB_color_cycle[-1],ls="--",zorder=1)
-            recap_axis_all.axvline(x=half_ratio, color=CB_color_cycle[-2],ls="--",zorder=1)
-            recap_axis_non_unique.axvline(x=full_ratio, color=CB_color_cycle[-1],ls="--",zorder=1)
-            recap_axis_non_unique.axvline(x=half_ratio, color=CB_color_cycle[-2],ls="--",zorder=1)
+            if full_ratio <= 1:
+                recap_axis_all.axvline(x=full_ratio, color=CB_color_cycle[-1],ls="--",zorder=1)
+                recap_axis_non_unique.axvline(x=full_ratio, color=CB_color_cycle[-1],ls="--",zorder=1)
 
             alg_ax.set_xticks(all_divs_placeholder + 1.5*width, all_divs_str)
             alg_nu_ax.set_xticks(all_divs_placeholder + 1.5*width, all_divs_str)
@@ -259,9 +260,12 @@ def main(args):
     save_parent.mkdir(parents=True,exist_ok=True)
     save_parent = Path(save_parent.absolute().as_posix()+'/'+str(num_pages)+'_pages')
     save_parent.mkdir(parents=False,exist_ok=False)
+    save_par_abs_pos = save_parent.absolute().as_posix()
+    with open(save_par_abs_pos+'/'+"input_dir.txt",'w') as f:
+        f.write(p.absolute().as_posix())
 
     for fig,untracked_policy_name_lower in all_graphs:
-        fig.savefig(save_parent.absolute().as_posix()+'/'+untracked_policy_name_lower+'.png')
+        fig.savefig(save_par_abs_pos+'/'+untracked_policy_name_lower+'.png')
 
 
 # Press the green button in the gutter to run the script.
