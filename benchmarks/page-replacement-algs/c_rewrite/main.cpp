@@ -246,7 +246,7 @@ std::unordered_map<std::string, json> populate_or_get_db(const Args& args) {
     const std::string full_path = args.mem_trace_path;
     in_file = db.contains(full_path);
     if (!in_file) {
-        std::ios::openmode mt_mode = std::ios::out;
+        std::ios::openmode mt_mode = std::ios::in;
         if(!args.text_trace_format) mt_mode |= std::ios::binary;
         std::ifstream mtf(full_path,mt_mode);
         if (!mtf.is_open()) {
