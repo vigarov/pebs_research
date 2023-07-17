@@ -10,9 +10,9 @@
 class CAR : public GenericAlgorithm{
 public:
     explicit CAR(size_t page_cache_size,untracked_eviction::type evictionType) : GenericAlgorithm(page_cache_size,evictionType){};
-    bool consume_tracked(page_t page_start) override;
+    evict_return_t consume_tracked(page_t page_start) override;
     inline bool is_tracked_page_fault(page_t page) const override {return !page_to_data_internal.contains(page) || page_to_data_internal.at(page).in_list == B1 || page_to_data_internal.at(page).in_list == B2;};
-    void evict_from_tracked() override;
+    evict_return_t evict_from_tracked() override;
     size_t tracked_size() override{return caches[T1].size()+caches[T2].size();};
     std::string name() override {return "CAR";};
     std::unique_ptr<page_cache_copy_t> get_page_cache_copy() override;
@@ -37,7 +37,7 @@ private:
     std::unordered_map<page_t,CAR_page_data_internal> page_to_data_internal;
     double p = 0.;
     std::array<size_t,2> num_unreferenced{};
-    void replace();
+    page_t replace();
     dual_container_range<car_cache_t,car_cache_t> dcr{caches[T1],caches[T2]};
 };
 

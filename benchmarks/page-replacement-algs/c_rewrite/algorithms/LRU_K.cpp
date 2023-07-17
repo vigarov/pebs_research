@@ -1,6 +1,9 @@
 #include "LRU_K.h"
 
-bool LRU_K::consume_tracked(page_t page_start){
+evict_return_t LRU_K::consume_tracked(page_t page_start){
+    // TODO: adapt for evict_return_t
+    return std::nullopt;
+    //END TODO
     bool changed = true;
     count_stamp+=1;
     auto page_fault = is_tracked_page_fault(page_start); //TODO

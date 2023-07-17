@@ -1,17 +1,16 @@
 #include "ARC.h"
 
-bool ARC::consume_tracked(page_t page_start) {
+evict_return_t ARC::consume_tracked(page_t page_start) {
     auto &page_data_internal = page_to_data_internal[page_start];
     auto in_cache = (page_data_internal.in_list == T1 || page_data_internal.in_list == T2);
-    const bool not_changed =
-            page_data_internal.in_list == T2 && (std::next(page_data_internal.at_iterator) == caches[T2].end());
 
+    evict_return_t ret;
     if (in_cache) {
         caches[page_data_internal.in_list].erase(page_data_internal.at_iterator);
         page_data_internal.at_iterator = caches[T2].insert(caches[T2].end(), page_start);
         page_data_internal.in_list = T2;
+        ret = std::nullopt;
     }
-
     else {
         if (page_data_internal.in_list == B1) {
             const double delta_1 =
@@ -20,10 +19,10 @@ bool ARC::consume_tracked(page_t page_start) {
             p = std::min(p + delta_1, static_cast<double>(max_page_cache_size));
             if(page_cache_full()) {
                 if(U->size() == 0) {
-                    replace(false);
+                    ret = replace(false);
                 }
                 else{
-                    U->evict();
+                    ret = U->evict();
                 }
             }
             //Remove from B1, no need to update indices as B_i is not considered for TL
@@ -31,6 +30,7 @@ bool ARC::consume_tracked(page_t page_start) {
             //Insert into T2 MRU
             page_data_internal.at_iterator = caches[T2].insert(caches[T2].end(), page_start);
             page_data_internal.in_list = T2;
+
         }
         else if (page_data_internal.in_list == B2) {
             const double delta_2 = caches[B2].size() >= caches[B1].size() ? 1. : static_cast<double>(caches[B1].size()) /
@@ -38,10 +38,10 @@ bool ARC::consume_tracked(page_t page_start) {
             p = std::max(p - delta_2, 0.);
             if(page_cache_full()) {
                 if(U->size() == 0) {
-                    replace(true);
+                    ret = replace(true);
                 }
                 else{
-                    U->evict();
+                    ret = U->evict();
                 }
             }
             //Remove from B2, no need to update indices as B_i is not considered for TL
@@ -55,24 +55,25 @@ bool ARC::consume_tracked(page_t page_start) {
                     auto it_to_remove = caches[B1].begin();
                     page_to_data_internal.erase(*it_to_remove);
                     caches[B1].erase(it_to_remove);
-                    replace(false);
+                    ret = replace(false);
                 } else {
                     auto it_to_remove = caches[T1].begin();
                     auto page = *it_to_remove;
                     caches[T1].erase(it_to_remove);
                     page_to_data_internal.erase(page);
+                    ret = page;
                 }
             } else {
                 //This is the branch taken until |T1|+|T2| fills up (as nothing is "demoted" to B_i before
                 const auto total_size = caches[T1].size() + caches[T2].size() + caches[B1].size() + caches[B2].size();
-                if (page_cache_full() && U->size() != 0) U->evict(); // This implies that |T1|+|T2| < max_page_cache_size
+                if (page_cache_full() && U->size() != 0) ret = U->evict(); // This implies that |T1|+|T2| < max_page_cache_size
                 else if (total_size >= max_page_cache_size) {
                     if (total_size == 2 * max_page_cache_size) {
                         auto it_to_remove = caches[B2].begin();
                         page_to_data_internal.erase(*it_to_remove);
                         caches[B2].erase(it_to_remove);
                     }
-                    replace(false);
+                    ret = replace(false);
                 }
             }
             //Put in T1 MRU, and update relevant indices
@@ -81,26 +82,29 @@ bool ARC::consume_tracked(page_t page_start) {
             page_data_internal.in_list = T1;
         }
     }
-    return !not_changed;
+    return ret;
 }
 
-void ARC::replace(bool inB2) {
+page_t ARC::replace(bool inB2) {
     const auto t1_s = caches[T1].size();
+    page_t ret;
     if( t1_s!=0 && ( (t1_s >= static_cast<size_t>(p)) || (inB2 && t1_s == static_cast<size_t>(p)) ) ){
-        lru_to_mru(T1, B1);
+        ret = lru_to_mru(T1, B1);
     }
     else{
-        lru_to_mru(T2,B2);
+        ret = lru_to_mru(T2,B2);
     }
+    return ret;
 }
 
-void ARC::lru_to_mru(cache_list_idx from, cache_list_idx to) {
+page_t ARC::lru_to_mru(cache_list_idx from, cache_list_idx to) {
     auto page_it = caches.at(from).begin();
     const auto page = *page_it;
     auto & page_data_internal = page_to_data_internal[page];
     caches[from].erase(page_it);
     page_data_internal.in_list = to;
     page_data_internal.at_iterator = caches.at(to).insert(caches.at(to).end(), page);
+    return page;
 }
 
 std::unique_ptr<page_cache_copy_t> ARC::get_page_cache_copy() {
@@ -110,13 +114,14 @@ std::unique_ptr<page_cache_copy_t> ARC::get_page_cache_copy() {
     return std::make_unique<page_cache_copy_t>(concatenated_list);
 }
 
-void ARC::evict_from_tracked() {
+evict_return_t ARC::evict_from_tracked() {
     //This will be called iff a memory access is done, and is not part of the mem trace, yet the cache is full, and U is empty
     //--> we must call `replace(false)`, as if we were in the last clause of ARC's consume (page of fault of some page that is not referenced in neither lists
     //even though it can be - as ARC is technically not aware of it
     const auto total_size = caches[T1].size() + caches[T2].size() + caches[B1].size() + caches[B2].size();
+    if(tracked_size()==0) return std::nullopt;
 
-    replace(false);
+    auto ret = replace(false);
 
     //Make size in the directory if needed
     if(total_size >= 2 * max_page_cache_size){
@@ -127,4 +132,5 @@ void ARC::evict_from_tracked() {
         page_to_data_internal.erase(caches[B1].front());
         caches[B1].pop_front();
     }
+    return ret;
 }

@@ -18,6 +18,7 @@
 
 typedef uint64_t ptr_t;
 typedef ptr_t page_t;
+typedef std::optional<page_t> evict_return_t;
 
 typedef uint32_t temp_t;
 
@@ -169,7 +170,7 @@ public:
     virtual bool contains(const T& element) = 0;
     virtual bool insert(const T& element) = 0;
     virtual bool erase(const T& element) = 0;
-    virtual bool evict() = 0;
+    [[nodiscard]] virtual evict_return_t evict() = 0;
     virtual size_t size() = 0;
 };
 
@@ -213,19 +214,20 @@ public:
         return false;
     };
 
-    bool get_random(T& ret,bool andErase = false){
+    evict_return_t get_random(bool andErase = false){
         auto elem_size =elems.size();
-        if(elem_size == 0) return false;
+        if(elem_size == 0) return std::nullopt;
         std::uniform_int_distribution<std::mt19937::result_type> dist(0,elem_size-1);
-        ret = elems[dist(rng)];
+        auto ret = elems[dist(rng)];
         if(andErase) erase(ret);
-        return true;
+        return ret;
     };
-    bool pop_random(T& ret){return get_random(ret,true);};
+    evict_return_t pop_random(){
+        return get_random(true);
+    };
 
-    bool evict() override{
-        T element; //Unneeded
-        return pop_random(element);
+    evict_return_t evict() override{
+        return pop_random();
     };
 
     size_t size() override{return elems.size();}
@@ -262,12 +264,12 @@ public:
         }
         return false;
     };
-    bool evict() override{
-        if(elems.empty()) return false;
+    evict_return_t evict() override{
+        if(elems.empty()) return std::nullopt;
         auto elem = *elems.begin();
         elem_info.erase(elem);
         elems.pop_front();
-        return true;
+        return elem;
     };
     size_t size() override{
         return elems.size();
@@ -314,21 +316,25 @@ public:
       delete U;
     };
 
-    [[nodiscard]] bool consume(page_t page_start, bool from_partial_mt){
+    [[nodiscard]] evict_return_t consume(page_t page_start, bool from_partial_mt){
+        evict_return_t ret;
         if(!from_partial_mt){
             //Must be a page fault
             if(page_cache_full()){
-                evict();
+                ret = evict();
             }
-            return consume_untracked(page_start);
+            auto evicted_from_consumption = consume_untracked(page_start);
+            if(ret == std::nullopt) ret=evicted_from_consumption;
         }
         else{
             //Not necessarily a page fault
             if(U->contains(page_start)){
-                U->erase(page_start);
+                ret = U->erase(page_start);
             }
-            return consume_tracked(page_start);
+            auto evicted_from_consumption = consume_tracked(page_start);
+            if(ret == std::nullopt) ret=evicted_from_consumption;
         }
+        return ret;
     }
 
     [[nodiscard]] virtual inline bool is_page_fault(page_t page) { //TODO rename to `is_page_fault` after refactor
@@ -365,10 +371,10 @@ protected:
     size_t max_page_cache_size;
 
 
-    [[nodiscard]] bool consume_untracked(page_t page_start) const{
+    [[nodiscard]] evict_return_t consume_untracked(page_t page_start) const{
         return U->insert(page_start);
     }
-    [[nodiscard]] virtual bool consume_tracked(page_t page_start) = 0;
+    [[nodiscard]] virtual evict_return_t consume_tracked(page_t page_start) = 0;
 
     [[nodiscard]] virtual inline bool is_tracked_page_fault(page_t page) const  = 0;
     virtual size_t tracked_size() = 0;
@@ -377,10 +383,12 @@ protected:
     }
 
 
-    virtual void evict(){
-        if(!U->evict()){ //U->evict returns false iff U->size() == 0 <=> must evict from list of "tracked" pages+
-            evict_from_tracked();
+    virtual evict_return_t evict(){
+        auto ret = U->evict();
+        if(ret == std::nullopt){ //U->evict returns false iff U->size() == 0 <=> must evict from list of "tracked" pages+
+            ret = evict_from_tracked();
         }
+        return ret;
     }
-    virtual void evict_from_tracked() = 0;
+    [[nodiscard]] virtual evict_return_t evict_from_tracked() = 0;
 };

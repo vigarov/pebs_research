@@ -4,22 +4,20 @@
 
 #include "CAR.h"
 
-bool CAR::consume_tracked(page_t page_start) {
-    bool changed = true;
+evict_return_t CAR::consume_tracked(page_t page_start) {
     auto& page_data_internal = page_to_data_internal[page_start];
     auto in_cache = (page_data_internal.in_list == T1 || page_data_internal.in_list == T2);
+
+    evict_return_t ret;
     if (in_cache){
         if(!page_data_internal.referenced) {
             page_data_internal.referenced = true;
         }
-        //else we already have page_data.referenced == 1
-        else{
-            changed=false;
-        }
+        ret = std::nullopt;
     }
     else{
         if(tracked_size() == max_page_cache_size){
-            replace();
+            ret = replace();
             if(page_data_internal.in_list != B1 && page_data_internal.in_list != B2 ){
                 if (caches[T1].size() + caches[B1].size() == max_page_cache_size) {
                     // Discard LRU in B1
@@ -34,8 +32,10 @@ bool CAR::consume_tracked(page_t page_start) {
             }
         }
         else if(page_cache_full()){
-            U->evict();
+            ret = U->evict();
         }
+
+
         if(page_data_internal.in_list != B1 && page_data_internal.in_list != B2){
             //History Miss
             page_data_internal.at_iterator = caches[T1].insert(caches[T1].end(),page_start);
@@ -54,11 +54,12 @@ bool CAR::consume_tracked(page_t page_start) {
             page_data_internal.in_list = T2;
         }
     }
-    return changed;
+    return ret;
 }
 
-void CAR::replace() {
+page_t CAR::replace() {
     bool found = false;
+    page_t ret;
     while(!found){
         if(caches[T1].size() >= static_cast<size_t>(std::max(1., p))){
             // T1 is oversized
@@ -75,6 +76,7 @@ void CAR::replace() {
                 t1_head_data_internal.at_iterator = caches[T2].insert(caches[T2].end(),t1_head);
                 t1_head_data.in_list = T2;
             }
+            ret = caches[T1].front();
             caches[T1].pop_front();
         }else{
             // T2 is oversized
@@ -91,9 +93,11 @@ void CAR::replace() {
                 t2_head_data_internal.at_iterator = caches[T2].insert(caches[T2].end(),t2_head);
                 t2_head_data.in_list = T2;
             }
+            ret = caches[T2].front();
             caches[T2].pop_front();
         }
     }
+    return ret;
 }
 
 std::unique_ptr<page_cache_copy_t> CAR::get_page_cache_copy() {
@@ -106,8 +110,9 @@ std::unique_ptr<page_cache_copy_t> CAR::get_page_cache_copy() {
 }
 
 
-void CAR::evict_from_tracked() {
-    replace();
+evict_return_t CAR::evict_from_tracked() {
+    if(tracked_size()==0)return std::nullopt;
+    auto ret = replace();
     if (caches[T1].size() + caches[B1].size() >= max_page_cache_size) {
         // Discard LRU in B1
         page_to_data_internal.erase(caches[B1].front());
@@ -118,4 +123,5 @@ void CAR::evict_from_tracked() {
         page_to_data_internal.erase(caches[B2].front());
         caches[B2].pop_front();
     }
+    return ret;
 }

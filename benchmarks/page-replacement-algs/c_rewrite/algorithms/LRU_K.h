@@ -8,13 +8,13 @@
 class LRU_K : public GenericAlgorithm{
 public:
     LRU_K(size_t page_cache_size,uint8_t K,untracked_eviction::type evictionType) : GenericAlgorithm(page_cache_size,evictionType),K(K){};
-    bool consume_tracked(page_t page_start) override;
+    evict_return_t consume_tracked(page_t page_start) override;
     inline bool is_tracked_page_fault(page_t page) const override {return !page_to_data_internal.contains(page);};
     std::string name() override {return "LRU_"+std::to_string(K);};
     std::unique_ptr<page_cache_copy_t> get_page_cache_copy() override;
     const lru_k_cache_t * get_cache_iterable() const {return &page_cache;}
-    void evict_from_tracked() override {//TODO
-         }
+    evict_return_t evict_from_tracked() override {//TODO
+        return std::nullopt;}
     size_t tracked_size() override{return page_cache.size();};
 private:
     std::string cache_to_string(size_t num_elements) override{

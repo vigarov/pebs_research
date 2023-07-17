@@ -491,20 +491,21 @@ namespace consideration_methods{
     }
 }
 
-#define GRANULARITY 10
+#define DATA_GRANULARITY 20
+#define TOP_N 6
 
 struct AlgInThread{
     std::unique_ptr<GenericAlgorithm> alg;
     size_t considered_loads = 0, considered_stores = 0;
-    uint8_t changed = true;
     const std::unique_ptr<consideration_methods::Considerator> considerator;
     uint64_t n_pfaults = 0, considered_pfaults = 0;
-    size_t cumulative_unique_pages_between_page_faults;
+    size_t cumulative_unique_pages_between_page_faults = 0;
     const ThreadWorkAlgs twa;
 };
 
 static const std::string STATS_FN = "stats.csv";
-static const std::string DIP_FN = "dip.json";
+static const std::string DIP_BPU_FN = "dip_bpu.json";
+static const std::string DIP_MOST_IN_OUT = "dip_mio.json";
 
 
 void save_to_file_compressed(const std::shared_ptr<temp_log_t>& array, const std::string& savedir, size_t number_writes) {
@@ -519,6 +520,22 @@ void save_to_file_compressed(const std::shared_ptr<temp_log_t>& array, const std
 }
 
 static constexpr char SEPARATOR = ',';
+
+typedef std::pair<page_t,std::pair<uint64_t,uint64_t>> pio_kv_t;
+
+template<typename K,class V>
+std::string print_kvs_vector(const std::vector<std::pair<K,V>>& map_kvs, std::function<std::string(const V&)> print_value){
+    std::stringstream ss;
+    auto at = map_kvs.begin();
+    auto last = std::prev(map_kvs.end());
+    while(at!=last) {
+        auto item = *at;
+        ss <<"\"" <<item.first << "\":"<<print_value(item.second)<<",";
+        at = std::next(at);
+    }
+    ss << "\"" << (*at).first << "\":" << print_value((*at).second);
+    return ss.str();
+}
 
 static void simulate_one(
 #ifdef SERVER
@@ -570,14 +587,18 @@ static void simulate_one(
     }
     //auto should_break = (ait.twa.alg_info.second.num== ait.twa.alg_info.second.denom) && (ait.twa.alg_info.first == page_cache_algs::LRU_t) && (ait.twa.save_dir.find("random") != std::string::npos);
 
-    const size_t seen_period = (total_length/BIN_LINE_SIZE_BYTES)/(GRANULARITY);
+    const size_t seen_period = (total_length/BIN_LINE_SIZE_BYTES)/(DATA_GRANULARITY);
     size_t running_seen_period = seen_period;
     size_t seen_period_index = 0;
     size_t previous_pfaults = 0;
     std::unordered_set<page_t> running_unique_pages_between_pfaults;
+    std::unordered_map<page_t,std::pair<uint64_t,uint64_t>> running_page_ins_outs;
 
-    std::ofstream dofs(ait.twa.save_dir+DIP_FN,std::ios_base::out | std::ios_base::trunc);
+    std::ofstream dofs(ait.twa.save_dir + DIP_BPU_FN, std::ios_base::out | std::ios_base::trunc);
     dofs << "{\"averages\":[";
+    std::ofstream dmiofs(ait.twa.save_dir + DIP_MOST_IN_OUT, std::ios_base::out | std::ios_base::trunc);
+    dmiofs << " {";
+
 
     const size_t print_stats_period = 500'000'000;
     size_t running_print_stats_period = print_stats_period;
@@ -608,11 +629,51 @@ static void simulate_one(
             seen += 1;
             if(seen == running_seen_period){
                 dofs << std::dec <<  (double)ait.cumulative_unique_pages_between_page_faults / (double)(ait.n_pfaults - previous_pfaults);
-                if(seen_period_index++!=GRANULARITY) dofs<<",";
-                else dofs<<"]}";
+
                 ait.cumulative_unique_pages_between_page_faults = 0;
                 previous_pfaults = ait.n_pfaults;
                 running_seen_period+=seen_period;
+
+                std::vector<pio_kv_t> top_ins(TOP_N);
+                std::vector<pio_kv_t> top_outs(TOP_N);
+                std::vector<pio_kv_t> top_total(TOP_N);
+                std::partial_sort_copy(running_page_ins_outs.begin(),
+                                       running_page_ins_outs.end(),
+                                       top_ins.begin(),
+                                       top_ins.end(),
+                                       [](pio_kv_t const &l,
+                                          pio_kv_t const &r) {
+                                           return l.second.first > r.second.first;
+                                       });
+                std::partial_sort_copy(running_page_ins_outs.begin(),
+                                       running_page_ins_outs.end(),
+                                       top_outs.begin(),
+                                       top_outs.end(),
+                                       [](pio_kv_t const &l,
+                                          pio_kv_t const &r) {
+                                           return l.second.second > r.second.second;
+                                       });
+                std::partial_sort_copy(running_page_ins_outs.begin(),
+                                       running_page_ins_outs.end(),
+                                       top_total.begin(),
+                                       top_total.end(),
+                                       [](pio_kv_t const &l,
+                                          pio_kv_t const &r) {
+                                           return l.second.first + l.second.second > r.second.first + r.second.second;
+                                       });
+                std::function<std::string(const std::pair<uint64_t,uint64_t>&)> print_ins = [](const auto& elem){return std::to_string(elem.first);};
+                std::function<std::string(const std::pair<uint64_t,uint64_t>&)> print_outs = [](const auto& elem){return std::to_string(elem.second);};
+                std::function<std::string(const std::pair<uint64_t,uint64_t>&)> print_ins_outs = [](const auto& elem){return std::to_string(elem.first + elem.second);};
+                dmiofs << "\t\""<<std::dec<<seen_period_index++<<"\"{\n\t\t[" << print_kvs_vector(top_ins,print_ins) << "],\n\t\t["<< print_kvs_vector(top_outs,print_outs) <<"],\n\t\t[" << print_kvs_vector(top_total,print_ins_outs) <<"]\n\t}\n";
+                if(seen_period_index != DATA_GRANULARITY) {
+                    dofs << ",";
+                    dmiofs << ",";
+                }
+                else {
+                    dofs << "]}";
+                    dmiofs << "]}";
+                }
+                running_page_ins_outs.clear();
             }
 
             if (seen == running_print_stats_period){
@@ -636,6 +697,8 @@ static void simulate_one(
                 ait.cumulative_unique_pages_between_page_faults+=running_unique_pages_between_pfaults.size();
                 ait.n_pfaults++;
                 running_unique_pages_between_pfaults.clear();
+                running_page_ins_outs.try_emplace(page_base,0,0);
+                running_page_ins_outs[page_base].first++;
             }
             else{
                 running_unique_pages_between_pfaults.insert(page_base);
@@ -654,10 +717,20 @@ static void simulate_one(
                     ait.considered_pfaults++;
                 }
 
-                ait.changed = ait.alg->consume(page_base,true);
+                auto maybe_evicted = ait.alg->consume(page_base,true);
+                if(maybe_evicted!=std::nullopt) {
+                    auto evicted_page = maybe_evicted.value();
+                    running_page_ins_outs.try_emplace(evicted_page,0,0);
+                    running_page_ins_outs[evicted_page].second++;
+                }
             }
             else if(pfault){
-                ait.changed = ait.alg->consume(page_base,false);
+                auto maybe_evicted = ait.alg->consume(page_base,false);
+                if(maybe_evicted!=std::nullopt) {
+                    auto evicted_page = maybe_evicted.value();
+                    running_page_ins_outs.try_emplace(evicted_page,0,0);
+                    running_page_ins_outs[evicted_page].second++;
+                }
             }
             //else no need to add to U, since we don't have a page fault
             //Sanity check
@@ -685,6 +758,7 @@ static void simulate_one(
 #endif
     }
     dofs.close();
+    dmiofs.close();
 
 #ifndef SERVER
     {
