@@ -41,6 +41,18 @@ int main(int argc, char* argv[]){
         std::cerr << "Failed to open memory trace file" << std::endl;
         exit(-1);
     }
+    auto fsize = mtf.tellg();
+    mtf.seekg( 0, std::ios::end );
+    fsize = mtf.tellg() - fsize;
+    mtf.clear();
+    mtf.seekg(0,std::ios::beg);
+
+#define PERIOD 10
+#define TO_USE_PERIOD ((PERIOD)-1)
+
+    size_t at_period = fsize/TO_USE_PERIOD;
+
+
     uint64_t lds = 0,strs = 0;
     std::function<bool(std::string&)> read;
     std::function<std::pair<uint8_t,page_t>(std::string&)> parse;
@@ -56,33 +68,38 @@ int main(int argc, char* argv[]){
     };
 
     timestamp at = 0;
-    std::unordered_map<page_t,page_data> all_pages;
-    while(read(line)){
+#define N 15
 
-        auto[is_load,address] = parse(line);
-        if (is_load) {
-            lds += 1;
-        } else {
-            strs += 1;
+    for(size_t i =0;i<PERIOD;i++) {
+        std::unordered_map<page_t, page_data> all_pages;
+        while (read(line) && ((++at)%at_period)!=0) {
+
+            auto [is_load, address] = parse(line);
+            if (is_load) {
+                lds += 1;
+            } else {
+                strs += 1;
+            }
+            all_pages[page_start_from_mem_address(address)].timestamps.push_back(at);
         }
-        all_pages[page_start_from_mem_address(address)].timestamps.push_back(at++);
+
+        std::vector<map_kv_t> top_n(N);
+        std::partial_sort_copy(all_pages.begin(),
+                               all_pages.end(),
+                               top_n.begin(),
+                               top_n.end(),
+                               [](map_kv_t const &l,
+                                  map_kv_t const &r) {
+                                   return l.second.timestamps.size() > r.second.timestamps.size();
+                               });
+
+        std::cout<< "at:" << at << "iteration:" << i << "\nn_unique pages" << all_pages.size() << "\nn_unique addresses" << lds+strs <<"\nTop N pages" << print_vector(top_n) <<std::endl;
+
     }
     mtf.close();
 
-#define N 20
 
-    std::vector<map_kv_t> top_n(N);
-    std::partial_sort_copy(all_pages.begin(),
-                           all_pages.end(),
-                           top_n.begin(),
-                           top_n.end(),
-                           [](map_kv_t const& l,
-                              map_kv_t const& r)
-                           {
-                               return l.second.timestamps.size() > r.second.timestamps.size();
-                           });
 
-    std::cout<< "n_unique pages" << all_pages.size() << "\nn_unique addresses" << lds+strs <<"\nTop N pages" << print_vector(top_n) <<std::endl;
 
     return 0;
 }
