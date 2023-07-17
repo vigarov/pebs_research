@@ -582,10 +582,7 @@ static void simulate_one(
             const auto is_load = temp == 0;
             uint64_t mem_address = 0;
             memcpy((void *) &mem_address, mmap_file_address+at, sizeof(uint64_t));
-            if(!is_load && temp != 1) std::cerr<<"Unknown is_load value: " << is_load << " ;and mem_address is: "<< std::hex << "0x"<<mem_address <<std::dec << std::endl;
-            if(mem_address == 1) std::cerr<< "Page 1?? " << is_load << " at before and after: " << at;
             at += sizeof(uint64_t);
-            if(mem_address == 1) std::cerr<<"/"<<at <<std::endl;
             return std::tuple{true,is_load,mem_address};
         };
     }
@@ -632,12 +629,12 @@ static void simulate_one(
 #endif
 
             seen += 1;
-            if(seen == running_seen_period-1){
+            if(seen == running_seen_period){
                 running_seen_period+=seen_period;
 
                 double temp1 = ait.cumulative_unique_pages_between_page_faults,temp2 = ait.n_pfaults - previous_pfaults;
-                if(temp2==0) std::cerr<<"No new page faults? " << seen << "   " <<  temp1 << ",  " << temp2;
-                dofs << std::dec <<  temp1/temp2;
+                if(temp2 == 0) dofs << "inf";
+                else dofs << std::dec <<  temp1/temp2;
                 ait.cumulative_unique_pages_between_page_faults = 0;
                 previous_pfaults = ait.n_pfaults;
 

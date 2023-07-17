@@ -266,7 +266,7 @@ public:
     };
     evict_return_t evict() override{
         if(elems.empty()) return std::nullopt;
-        auto elem = *elems.begin();
+        auto elem = elems.front();
         elem_info.erase(elem);
         elems.pop_front();
         return elem;
@@ -317,7 +317,7 @@ public:
     };
 
     [[nodiscard]] evict_return_t consume(page_t page_start, bool from_partial_mt){
-        evict_return_t ret;
+        evict_return_t ret = std::nullopt;
         if(!from_partial_mt){
             //Must be a page fault
             if(page_cache_full()){

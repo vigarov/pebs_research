@@ -8,7 +8,7 @@ evict_return_t LRU::consume_tracked(page_t page_start){
     auto page_fault = is_tracked_page_fault(page_start);
     auto& page_data_internal = page_to_data_internal[page_start];
 
-    evict_return_t ret;
+    evict_return_t ret = std::nullopt;
     if(page_fault) {
         if (page_cache_full()) { //Full, must replace
             ret = evict();

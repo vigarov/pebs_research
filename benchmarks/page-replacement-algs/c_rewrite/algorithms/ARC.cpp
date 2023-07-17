@@ -4,7 +4,7 @@ evict_return_t ARC::consume_tracked(page_t page_start) {
     auto &page_data_internal = page_to_data_internal[page_start];
     auto in_cache = (page_data_internal.in_list == T1 || page_data_internal.in_list == T2);
 
-    evict_return_t ret;
+    evict_return_t ret = std::nullopt;
     if (in_cache) {
         caches[page_data_internal.in_list].erase(page_data_internal.at_iterator);
         page_data_internal.at_iterator = caches[T2].insert(caches[T2].end(), page_start);

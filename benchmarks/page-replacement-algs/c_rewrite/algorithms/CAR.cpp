@@ -8,7 +8,7 @@ evict_return_t CAR::consume_tracked(page_t page_start) {
     auto& page_data_internal = page_to_data_internal[page_start];
     auto in_cache = (page_data_internal.in_list == T1 || page_data_internal.in_list == T2);
 
-    evict_return_t ret;
+    evict_return_t ret = std::nullopt;
     if (in_cache){
         if(!page_data_internal.referenced) {
             page_data_internal.referenced = true;
