@@ -491,6 +491,7 @@ namespace consideration_methods{
     }
 }
 
+#define GRANULARITY 10
 
 struct AlgInThread{
     std::unique_ptr<GenericAlgorithm> alg;
@@ -498,10 +499,12 @@ struct AlgInThread{
     uint8_t changed = true;
     const std::unique_ptr<consideration_methods::Considerator> considerator;
     uint64_t n_pfaults = 0, considered_pfaults = 0;
+    size_t cumulative_unique_pages_between_page_faults;
     const ThreadWorkAlgs twa;
 };
 
-static const std::string OTHER_DATA_FN = "stats.csv";
+static const std::string STATS_FN = "stats.csv";
+static const std::string DIP_FN = "dip.json";
 
 
 void save_to_file_compressed(const std::shared_ptr<temp_log_t>& array, const std::string& savedir, size_t number_writes) {
@@ -567,6 +570,18 @@ static void simulate_one(
     }
     //auto should_break = (ait.twa.alg_info.second.num== ait.twa.alg_info.second.denom) && (ait.twa.alg_info.first == page_cache_algs::LRU_t) && (ait.twa.save_dir.find("random") != std::string::npos);
 
+    const size_t seen_period = (total_length/BIN_LINE_SIZE_BYTES)/(GRANULARITY);
+    size_t running_seen_period = seen_period;
+    size_t seen_period_index = 0;
+    size_t previous_pfaults = 0;
+    std::unordered_set<page_t> running_unique_pages_between_pfaults;
+
+    std::ofstream dofs(ait.twa.save_dir+DIP_FN,std::ios_base::out | std::ios_base::trunc);
+    dofs << "{\"averages\":[";
+
+    const size_t print_stats_period = 500'000'000;
+    size_t running_print_stats_period = print_stats_period;
+
     while(at < total_length){
 #endif
 #ifndef SERVER
@@ -591,7 +606,17 @@ static void simulate_one(
 #endif
 
             seen += 1;
-            if (seen % 500'000'000 == 0){
+            if(seen == running_seen_period){
+                dofs << std::dec <<  (double)ait.cumulative_unique_pages_between_page_faults / (double)(ait.n_pfaults - previous_pfaults);
+                if(seen_period_index++!=GRANULARITY) dofs<<",";
+                else dofs<<"]}";
+                ait.cumulative_unique_pages_between_page_faults = 0;
+                previous_pfaults = ait.n_pfaults;
+                running_seen_period+=seen_period;
+            }
+
+            if (seen == running_print_stats_period){
+                running_print_stats_period += print_stats_period;
                 std::stringstream ss;
                 ss << tid << " - "<< get_alg_div_name(ait.twa.alg_info) <<" - Reached seen = " << seen << "\n"
                    << "SampleRate=" << ait.twa.alg_info.second.toDouble() << ",#T="
@@ -608,7 +633,12 @@ static void simulate_one(
             auto pfault = ait.alg->is_page_fault(page_base);
 
             if (pfault) {
+                ait.cumulative_unique_pages_between_page_faults+=running_unique_pages_between_pfaults.size();
                 ait.n_pfaults++;
+                running_unique_pages_between_pfaults.clear();
+            }
+            else{
+                running_unique_pages_between_pfaults.insert(page_base);
             }
 
             if(ait.considerator->should_consider()){
@@ -637,7 +667,7 @@ static void simulate_one(
 
         } //endfor
 
-        std::ofstream ofs(ait.twa.save_dir + OTHER_DATA_FN,std::ios_base::out|std::ios_base::trunc);
+        std::ofstream ofs(ait.twa.save_dir + STATS_FN, std::ios_base::out | std::ios_base::trunc);
         ofs << "seen,considered_l,considered_s,pfaults,considered_pfaults\n"
             << seen << SEPARATOR << ait.considered_loads << SEPARATOR << ait.considered_stores << SEPARATOR
             << ait.n_pfaults << SEPARATOR << ait.considered_pfaults << "\n";
@@ -654,6 +684,7 @@ static void simulate_one(
         }
 #endif
     }
+    dofs.close();
 
 #ifndef SERVER
     {
