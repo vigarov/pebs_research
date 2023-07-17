@@ -530,7 +530,7 @@ std::string print_kvs_vector(const std::vector<std::pair<K,V>>& map_kvs, std::fu
     auto last = std::prev(map_kvs.end());
     while(at!=last) {
         auto item = *at;
-        ss <<"\"" <<item.first << "\":"<<print_value(item.second)<<",";
+        ss <<"\"" << std::hex<< item.first << std::dec << "\":"<<print_value(item.second)<<",";
         at = std::next(at);
     }
     ss << "\"" << (*at).first << "\":" << print_value((*at).second);
@@ -588,6 +588,7 @@ static void simulate_one(
     //auto should_break = (ait.twa.alg_info.second.num== ait.twa.alg_info.second.denom) && (ait.twa.alg_info.first == page_cache_algs::LRU_t) && (ait.twa.save_dir.find("random") != std::string::npos);
 
     const size_t seen_period = (total_length/BIN_LINE_SIZE_BYTES)/(DATA_GRANULARITY);
+    std::cout<<"Using seen_period" << seen_period  << std::endl;
     size_t running_seen_period = seen_period;
     size_t seen_period_index = 0;
     size_t previous_pfaults = 0;
@@ -628,39 +629,32 @@ static void simulate_one(
 
             seen += 1;
             if(seen == running_seen_period){
-                dofs << std::dec <<  (double)ait.cumulative_unique_pages_between_page_faults / (double)(ait.n_pfaults - previous_pfaults);
+                running_seen_period+=seen_period;
 
+                dofs << std::dec <<  (double)ait.cumulative_unique_pages_between_page_faults / (double)(ait.n_pfaults - previous_pfaults);
                 ait.cumulative_unique_pages_between_page_faults = 0;
                 previous_pfaults = ait.n_pfaults;
-                running_seen_period+=seen_period;
 
                 std::vector<pio_kv_t> top_ins(TOP_N);
                 std::vector<pio_kv_t> top_outs(TOP_N);
                 std::vector<pio_kv_t> top_total(TOP_N);
-                std::partial_sort_copy(running_page_ins_outs.begin(),
-                                       running_page_ins_outs.end(),
-                                       top_ins.begin(),
-                                       top_ins.end(),
-                                       [](pio_kv_t const &l,
-                                          pio_kv_t const &r) {
+                std::partial_sort_copy(running_page_ins_outs.begin(),running_page_ins_outs.end(),
+                                       top_ins.begin(),top_ins.end(),
+                                       [](pio_kv_t const &l,pio_kv_t const &r) {
                                            return l.second.first > r.second.first;
                                        });
-                std::partial_sort_copy(running_page_ins_outs.begin(),
-                                       running_page_ins_outs.end(),
-                                       top_outs.begin(),
-                                       top_outs.end(),
-                                       [](pio_kv_t const &l,
-                                          pio_kv_t const &r) {
+                std::partial_sort_copy(running_page_ins_outs.begin(),running_page_ins_outs.end(),
+                                       top_outs.begin(),top_outs.end(),
+                                       [](pio_kv_t const &l,pio_kv_t const &r) {
                                            return l.second.second > r.second.second;
                                        });
-                std::partial_sort_copy(running_page_ins_outs.begin(),
-                                       running_page_ins_outs.end(),
-                                       top_total.begin(),
-                                       top_total.end(),
-                                       [](pio_kv_t const &l,
-                                          pio_kv_t const &r) {
+                std::partial_sort_copy(running_page_ins_outs.begin(),running_page_ins_outs.end(),
+                                       top_total.begin(),top_total.end(),
+                                       [](pio_kv_t const &l,pio_kv_t const &r) {
                                            return l.second.first + l.second.second > r.second.first + r.second.second;
                                        });
+                running_page_ins_outs.clear();
+
                 std::function<std::string(const std::pair<uint64_t,uint64_t>&)> print_ins = [](const auto& elem){return std::to_string(elem.first);};
                 std::function<std::string(const std::pair<uint64_t,uint64_t>&)> print_outs = [](const auto& elem){return std::to_string(elem.second);};
                 std::function<std::string(const std::pair<uint64_t,uint64_t>&)> print_ins_outs = [](const auto& elem){return std::to_string(elem.first + elem.second);};
@@ -673,7 +667,6 @@ static void simulate_one(
                     dofs << "]}";
                     dmiofs << "]}";
                 }
-                running_page_ins_outs.clear();
             }
 
             if (seen == running_print_stats_period){
