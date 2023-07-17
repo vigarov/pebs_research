@@ -491,7 +491,7 @@ namespace consideration_methods{
     }
 }
 
-#define DATA_GRANULARITY 20
+#define DATA_GRANULARITY 15
 #define TOP_N 6
 
 struct AlgInThread{
@@ -530,7 +530,7 @@ std::string print_kvs_vector(const std::vector<std::pair<K,V>>& map_kvs, std::fu
     auto last = std::prev(map_kvs.end());
     while(at!=last) {
         auto item = *at;
-        ss <<"\"" << std::hex<< item.first << std::dec << "\":"<<print_value(item.second)<<",";
+        ss <<"\"" << std::hex<< "0x"<<item.first << std::dec << "\":"<<print_value(item.second)<<",";
         at = std::next(at);
     }
     ss << "\"" << (*at).first << "\":" << print_value((*at).second);
@@ -631,7 +631,9 @@ static void simulate_one(
             if(seen == running_seen_period){
                 running_seen_period+=seen_period;
 
-                dofs << std::dec <<  (double)ait.cumulative_unique_pages_between_page_faults / (double)(ait.n_pfaults - previous_pfaults);
+                double temp1 = ait.cumulative_unique_pages_between_page_faults,temp2 = ait.n_pfaults - previous_pfaults;
+                if(temp2==0) std::cerr<<"No new page faults? " << seen << "   " <<  temp1 << ",  " << temp2;
+                dofs << std::dec <<  temp1/temp2;
                 ait.cumulative_unique_pages_between_page_faults = 0;
                 previous_pfaults = ait.n_pfaults;
 
