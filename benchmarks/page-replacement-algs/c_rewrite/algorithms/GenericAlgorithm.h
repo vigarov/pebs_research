@@ -329,10 +329,9 @@ public:
         else{
             //Not necessarily a page fault
             if(U->contains(page_start)){
-                ret = U->erase(page_start);
+                U->erase(page_start); //not evicted; simply moved to tracked
             }
-            auto evicted_from_consumption = consume_tracked(page_start);
-            if(ret == std::nullopt) ret=evicted_from_consumption;
+            ret = consume_tracked(page_start);
         }
         return ret;
     }
