@@ -533,7 +533,7 @@ std::string print_kvs_vector(const std::vector<std::pair<K,V>>& map_kvs, std::fu
         ss <<"\"" << std::hex<< "0x"<<item.first << std::dec << "\":"<<print_value(item.second)<<",";
         at = std::next(at);
     }
-    ss << "\"" << (*at).first << "\":" << print_value((*at).second);
+    ss << "\"" << std::hex<< "0x"<< (*at).first << "\":" << print_value((*at).second);
     return ss.str();
 }
 
@@ -578,9 +578,11 @@ static void simulate_one(
     }
     else{
         parse = [mmap_file_address,&at](){
-            auto is_load = mmap_file_address[at++] == 0;
+            auto temp = mmap_file_address[at++];
+            auto is_load = temp == 0;
             const uint64_t mem_address = 0;
             memcpy((void *) &mem_address, mmap_file_address+at, sizeof(uint64_t));
+            if(!is_load && temp != 1) std::cerr<<"Unknown is_load value: " << is_load << " ;and mem_address is: "<< std::hex << "0x"<<mem_address <<std::dec << std::endl;
             at += sizeof(uint64_t);
             return std::tuple{true,is_load,mem_address};
         };
@@ -628,7 +630,7 @@ static void simulate_one(
 #endif
 
             seen += 1;
-            if(seen == running_seen_period){
+            if(seen == running_seen_period-1){
                 running_seen_period+=seen_period;
 
                 double temp1 = ait.cumulative_unique_pages_between_page_faults,temp2 = ait.n_pfaults - previous_pfaults;
