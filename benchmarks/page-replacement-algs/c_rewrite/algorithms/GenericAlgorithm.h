@@ -372,7 +372,8 @@ protected:
 
 
     [[nodiscard]] evict_return_t consume_untracked(page_t page_start) const{
-        return U->insert(page_start);
+        U->insert(page_start); //never removes from tracked caches // full case taken care of in generic `consume`
+        return std::nullopt;
     }
     [[nodiscard]] virtual evict_return_t consume_tracked(page_t page_start) = 0;
 
