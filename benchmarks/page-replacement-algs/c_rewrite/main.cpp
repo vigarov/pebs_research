@@ -578,12 +578,14 @@ static void simulate_one(
     }
     else{
         parse = [mmap_file_address,&at](){
-            auto temp = mmap_file_address[at++];
-            auto is_load = temp == 0;
-            const uint64_t mem_address = 0;
+            uint8_t temp = mmap_file_address[at++];
+            const auto is_load = temp == 0;
+            uint64_t mem_address = 0;
             memcpy((void *) &mem_address, mmap_file_address+at, sizeof(uint64_t));
             if(!is_load && temp != 1) std::cerr<<"Unknown is_load value: " << is_load << " ;and mem_address is: "<< std::hex << "0x"<<mem_address <<std::dec << std::endl;
+            if(mem_address == 1) std::cerr<< "Page 1?? " << is_load << " at before and after: " << at;
             at += sizeof(uint64_t);
+            if(mem_address == 1) std::cerr<<"/"<<at <<std::endl;
             return std::tuple{true,is_load,mem_address};
         };
     }
